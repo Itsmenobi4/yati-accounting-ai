@@ -1,0 +1,223 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#101012">
+  <meta name="description" content="Yati Faradillah - AI Accounting Tutor">
+  <title>Yati Faradillah — Accounting AI</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+
+    <div class="sidebar-top">
+      <a class="brand" href="#">
+        <div class="brand-icon">✳</div>
+        <span>Yati</span>
+      </a>
+
+      <button class="icon-btn close-sidebar" id="closeSidebar">×</button>
+    </div>
+
+    <button class="new-chat-btn" id="newChat">
+      <span class="plus">＋</span>
+      <span>New conversation</span>
+    </button>
+
+    <div class="sidebar-label">WORKSPACE</div>
+
+    <button class="nav-item active">
+      <span class="nav-icon">◈</span>
+      <span>Accounting Tutor</span>
+    </button>
+
+    <button class="nav-item" id="learningBtn">
+      <span class="nav-icon">⌘</span>
+      <span>Learning center</span>
+    </button>
+
+    <div class="history-section">
+      <div class="sidebar-label">RECENT CHATS</div>
+      <div id="historyList"></div>
+    </div>
+
+    <div class="sidebar-bottom">
+      <div class="profile">
+        <div class="avatar">Y</div>
+
+        <div class="profile-info">
+          <strong>Yati Faradillah</strong>
+          <span>Accounting Intelligence</span>
+        </div>
+
+        <button class="profile-more" title="Profile">•••</button>
+      </div>
+    </div>
+
+  </aside>
+
+  <div class="overlay" id="overlay"></div>
+
+  <!-- MAIN CONTENT -->
+  <main class="main">
+
+    <!-- HEADER -->
+    <header class="topbar">
+
+      <div class="topbar-left">
+        <button class="icon-btn menu-btn" id="menuBtn">☰</button>
+
+        <div class="topbar-title">
+          <span class="title-name">Yati</span>
+
+          <button class="model-badge">
+            Accounting AI
+            <span>⌄</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <button class="icon-btn topbar-more" title="More">•••</button>
+      </div>
+
+    </header>
+
+    <!-- WELCOME -->
+    <section class="welcome" id="welcome">
+
+      <div class="welcome-content">
+
+        <div class="welcome-symbol">
+          <div class="symbol-inner">✳</div>
+        </div>
+
+        <div class="eyebrow">
+          <span class="status-dot"></span>
+          YOUR PERSONAL ACCOUNTING TUTOR
+        </div>
+
+        <h1>Let's learn<br><span>accounting.</span></h1>
+
+        <p class="welcome-description">
+          Memahami akuntansi nggak harus rumit.
+          Mulai dari dasar, pelajari konsepnya, dan pahami
+          setiap perhitungannya bersama Yati.
+        </p>
+
+        <div class="suggestions">
+
+          <button class="suggestion" data-prompt="Ajari aku dasar akuntansi dari nol, mulai dari pengertian akun, debit, kredit, dan persamaan dasar akuntansi.">
+            <div class="suggestion-icon purple">◫</div>
+
+            <div class="suggestion-text">
+              <strong>Belajar dari dasar</strong>
+              <span>Mulai memahami accounting</span>
+            </div>
+
+            <span class="suggestion-arrow">↗</span>
+          </button>
+
+          <button class="suggestion" data-prompt="Jelaskan bagaimana cara menentukan debit dan kredit dalam sebuah transaksi beserta contoh yang mudah dipahami.">
+            <div class="suggestion-icon blue">↗</div>
+
+            <div class="suggestion-text">
+              <strong>Debit & kredit</strong>
+              <span>Memahami pencatatan transaksi</span>
+            </div>
+
+            <span class="suggestion-arrow">↗</span>
+          </button>
+
+          <button class="suggestion" data-prompt="Ajari aku cara membuat jurnal umum akuntansi dan berikan beberapa contoh transaksi beserta jawabannya.">
+            <div class="suggestion-icon orange">▤</div>
+
+            <div class="suggestion-text">
+              <strong>Belajar jurnal umum</strong>
+              <span>Catat transaksi dengan benar</span>
+            </div>
+
+            <span class="suggestion-arrow">↗</span>
+          </button>
+
+          <button class="suggestion" data-prompt="Berikan aku latihan soal akuntansi dasar satu per satu. Jangan langsung berikan jawabannya, koreksi jawabanku setelah aku mencoba.">
+            <div class="suggestion-icon green">⌁</div>
+
+            <div class="suggestion-text">
+              <strong>Latihan soal</strong>
+              <span>Uji pemahamanmu</span>
+            </div>
+
+            <span class="suggestion-arrow">↗</span>
+          </button>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- CHAT -->
+    <section class="chat-area hidden" id="chatArea">
+      <div class="messages" id="messages"></div>
+    </section>
+
+    <!-- INPUT -->
+    <footer class="input-area">
+
+      <div class="input-box">
+
+        <textarea
+          id="promptInput"
+          rows="1"
+          placeholder="Tanyakan sesuatu tentang akuntansi..."
+        ></textarea>
+
+        <div class="input-bottom">
+
+          <div class="input-tools">
+            <button class="tool-btn" type="button">
+              ✳ <span>Tutor</span>
+            </button>
+
+            <span class="input-divider"></span>
+
+            <span class="input-hint">
+              Shift + Enter untuk baris baru
+            </span>
+          </div>
+
+          <button class="send-btn" id="sendBtn" disabled aria-label="Send message">
+            ↑
+          </button>
+
+        </div>
+
+      </div>
+
+      <div class="disclaimer">
+        Yati AI dapat membuat kesalahan. Periksa kembali informasi penting.
+      </div>
+
+    </footer>
+
+  </main>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+<script src="script.js"></script>
+
+</body>
+</html>
