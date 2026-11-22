@@ -1,9 +1,28 @@
 
 /* ==========================================
    YATI FARADILLAH — ACCOUNTING AI
+   Cross-Device Diagnostic Version
 ========================================== */
 
 const API_URL = "https://yati-accounting-api.fadhilmusyaffa999.workers.dev/api/chat";
+const REQUEST_TIMEOUT = 45000;
+
+// =========================
+// ID GENERATOR
+// =========================
+
+function generateId() {
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+
+  return (
+    "chat-" +
+    Date.now() +
+    "-" +
+    Math.random().toString(36).slice(2, 11)
+  );
+}
 
 // =========================
 // STATE
@@ -11,9 +30,13 @@ const API_URL = "https://yati-accounting-api.fadhilmusyaffa999.workers.dev/api/c
 
 function loadChats() {
   try {
-    const data = JSON.parse(localStorage.getItem("yati_chats") || "[]");
+    const data = JSON.parse(
+      localStorage.getItem("yati_chats") || "[]"
+    );
+
     return Array.isArray(data) ? data : [];
-  } catch {
+  } catch (error) {
+    console.error("Failed to load chats:", error);
     return [];
   }
 }
@@ -41,14 +64,19 @@ const overlay = document.getElementById("overlay");
 
 function saveChats() {
   try {
-    localStorage.setItem("yati_chats", JSON.stringify(chats));
+    localStorage.setItem(
+      "yati_chats",
+      JSON.stringify(chats)
+    );
   } catch (error) {
     console.error("Unable to save chat history:", error);
   }
 }
 
 function getCurrentChat() {
-  return chats.find(chat => chat.id === currentChatId);
+  return chats.find(
+    chat => chat.id === currentChatId
+  );
 }
 
 // =========================
@@ -74,7 +102,7 @@ function newChat() {
 
 function createChat(firstMessage) {
   const chat = {
-    id: crypto.randomUUID(),
+    id: generateId(),
     title: firstMessage.slice(0, 45),
     messages: [],
     createdAt: Date.now()
@@ -91,7 +119,9 @@ function createChat(firstMessage) {
 }
 
 function openChat(id) {
-  const chat = chats.find(item => item.id === id);
+  const chat = chats.find(
+    item => item.id === id
+  );
 
   if (!chat) return;
 
@@ -103,7 +133,10 @@ function openChat(id) {
   messages.innerHTML = "";
 
   chat.messages.forEach(message => {
-    renderMessage(message.role, message.content);
+    renderMessage(
+      message.role,
+      message.content
+    );
   });
 
   renderHistory();
@@ -130,7 +163,9 @@ function renderHistory() {
       item.classList.add("active");
     }
 
-    item.addEventListener("click", () => openChat(chat.id));
+    item.addEventListener("click", () => {
+      openChat(chat.id);
+    });
 
     historyList.appendChild(item);
   });
@@ -145,9 +180,14 @@ function renderMarkdown(content) {
     return null;
   }
 
-  const html = marked.parse(content);
+  try {
+    const html = window.marked.parse(content);
 
-  return DOMPurify.sanitize(html);
+    return window.DOMPurify.sanitize(html);
+  } catch (error) {
+    console.error("Markdown rendering error:", error);
+    return null;
+  }
 }
 
 // =========================
@@ -168,7 +208,8 @@ function renderMessage(role, content) {
   if (normalizedRole === "user") {
     label.textContent = "You";
   } else {
-    label.innerHTML = '<span class="ai-label-icon">✳</span> Yati';
+    label.innerHTML =
+      '<span class="ai-label-icon">✳</span> Yati';
   }
 
   const body = document.createElement("div");
@@ -232,7 +273,9 @@ function removeTyping() {
 // =========================
 
 function scrollToBottom() {
-  chatArea.scrollTop = chatArea.scrollHeight;
+  requestAnimationFrame(() => {
+    chatArea.scrollTop = chatArea.scrollHeight;
+  });
 }
 
 // =========================
@@ -267,13 +310,109 @@ input.addEventListener("keydown", event => {
   }
 });
 
-// =========================
-// SEND MESSAGE
-// =========================
-
 sendBtn.addEventListener("click", () => {
   sendMessage();
 });
+
+// =========================
+// API REQUEST
+// =========================
+
+async function requestYati(messagesToSend) {
+  const controller = new AbortController();
+
+  let timeoutTriggered = false;
+
+  const timeoutId = setTimeout(() => {
+    timeoutTriggered = true;
+    controller.abort();
+  }, REQUEST_TIMEOUT);
+
+  try {
+    console.log("Yati request started:", {
+      url: API_URL,
+      origin: window.location.origin,
+      timestamp: new Date().toISOString()
+    });
+
+    const response = await fetch(API_URL, {
+      method: "POST",
+
+      headers: {
+        "Content-Type": "application/json"
+      },
+
+      body: JSON.stringify({
+        messages: messagesToSend
+      }),
+
+      signal: controller.signal
+    });
+
+    const responseText = await response.text();
+
+    let data;
+
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      data = {
+        error: responseText || "Server returned an empty response."
+      };
+    }
+
+    console.log("Yati response received:", {
+      status: response.status,
+      ok: response.ok
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `HTTP ${response.status}: ${
+          data.error || data.message || responseText || "Request failed"
+        }`
+      );
+    }
+
+    if (!data.reply) {
+      throw new Error(
+        data.error || "AI tidak memberikan jawaban."
+      );
+    }
+
+    return data;
+
+  } catch (error) {
+    if (timeoutTriggered) {
+      throw new Error(
+        `Request timeout setelah ${REQUEST_TIMEOUT / 1000} detik.`
+      );
+    }
+
+    if (error.name === "AbortError") {
+      throw new Error(
+        "Request dibatalkan oleh browser."
+      );
+    }
+
+    // Fetch TypeError is often a network, TLS,
+    // CORS, DNS, or browser-level failure.
+    if (error.name === "TypeError") {
+      throw new Error(
+        `Fetch gagal: ${error.message}. Kemungkinan koneksi, SSL/TLS, DNS, atau CORS.`
+      );
+    }
+
+    throw error;
+
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// =========================
+// SEND MESSAGE
+// =========================
 
 async function sendMessage(customPrompt = null) {
   if (isLoading) return;
@@ -308,7 +447,7 @@ async function sendMessage(customPrompt = null) {
     chat = createChat(text);
   }
 
-  // User message
+  // Save user message
   const userMessage = {
     role: "user",
     content: text
@@ -323,29 +462,7 @@ async function sendMessage(customPrompt = null) {
   showTyping();
 
   try {
-    const response = await fetch(API_URL, {
-      method: "POST",
-
-      headers: {
-        "Content-Type": "application/json"
-      },
-
-      body: JSON.stringify({
-        messages: chat.messages
-      })
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        data.error || `HTTP ${response.status}`
-      );
-    }
-
-    if (!data.reply) {
-      throw new Error("AI tidak memberikan jawaban.");
-    }
+    const data = await requestYati(chat.messages);
 
     removeTyping();
 
@@ -358,22 +475,45 @@ async function sendMessage(customPrompt = null) {
 
     saveChats();
 
-    renderMessage("assistant", data.reply);
+    renderMessage(
+      "assistant",
+      data.reply
+    );
 
   } catch (error) {
     removeTyping();
 
+    const errorName = error?.name || "UnknownError";
+    const errorMessage =
+      error?.message || String(error);
+
+    console.error("Yati diagnostic error:", {
+      name: errorName,
+      message: errorMessage,
+      endpoint: API_URL,
+      origin: window.location.origin,
+      userAgent: navigator.userAgent,
+      timestamp: new Date().toISOString()
+    });
+
     renderMessage(
       "assistant",
-      "Maaf, Yati belum berhasil terhubung. Coba beberapa saat lagi ya."
-    );
+      `⚠️ **Yati mengalami kendala koneksi**
 
-    console.error("Yati error:", error);
+**Jenis error:** \`${errorName}\`
+
+**Detail:** \`${errorMessage}\`
+
+**Endpoint:** \`${API_URL}\`
+
+Silakan coba kembali. Jika error berlanjut, kirim screenshot pesan ini kepada pengembang Yati.`
+    );
 
   } finally {
     isLoading = false;
 
-    sendBtn.disabled = !input.value.trim();
+    sendBtn.disabled =
+      !input.value.trim();
 
     input.focus();
   }
@@ -441,4 +581,6 @@ document
 
 renderHistory();
 
-console.log("Yati Accounting AI UI initialized.");
+console.log("Yati Accounting AI initialized.");
+console.log("Frontend origin:", window.location.origin);
+console.log("API endpoint:", API_URL);
