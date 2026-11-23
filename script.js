@@ -1,339 +1,491 @@
 
 /* ==========================================
-   YATI FARADILLAH — ACCOUNTING AI
-   Cross-Device Diagnostic Version
+   YATI AI 2.0 — FRONTEND ENGINE
 ========================================== */
 
 const API_URL = "https://yati-accounting-api.fadhilmusyaffa999.workers.dev/api/chat";
-const REQUEST_TIMEOUT = 45000;
 
-// =========================
-// ID GENERATOR
-// =========================
+const STORAGE_KEY = "yati_ai_v2_chats";
+const ACTIVE_CHAT_KEY = "yati_ai_v2_active_chat";
 
-function generateId() {
-  if (window.crypto?.randomUUID) {
-    return window.crypto.randomUUID();
-  }
+// ==========================================
+// DOM
+// ==========================================
 
-  return (
-    "chat-" +
-    Date.now() +
-    "-" +
-    Math.random().toString(36).slice(2, 11)
-  );
-}
+const $ = (selector) => document.querySelector(selector);
 
-// =========================
+const app = $("#app");
+const sidebar = $("#sidebar");
+const sidebarOverlay = $("#sidebarOverlay");
+
+const newChatButton = $("#newChat");
+const openSidebarButton = $("#openSidebar");
+const collapseSidebarButton = $("#collapseSidebar");
+
+const welcome = $("#welcome");
+const chatArea = $("#chatArea");
+const chatScroll = $("#chatScroll");
+const messagesContainer = $("#messages");
+
+const promptInput = $("#promptInput");
+const sendButton = $("#sendBtn");
+
+const historyList = $("#historyList");
+const emptyHistory = $("#emptyHistory");
+
+const searchButton = $("#searchButton");
+const searchModal = $("#searchModal");
+const searchInput = $("#searchInput");
+const searchResults = $("#searchResults");
+const closeSearchButton = $("#closeSearch");
+
+const contextMenu = $("#contextMenu");
+const renameButton = $("#renameChat");
+const deleteButton = $("#deleteChat");
+
+const toastElement = $("#toast");
+
+// ==========================================
 // STATE
-// =========================
+// ==========================================
+
+let chats = loadChats();
+let activeChatId = localStorage.getItem(ACTIVE_CHAT_KEY);
+
+let isGenerating = false;
+let contextChatId = null;
+
+let toastTimeout = null;
+
+// ==========================================
+// STORAGE
+// ==========================================
 
 function loadChats() {
   try {
-    const data = JSON.parse(
-      localStorage.getItem("yati_chats") || "[]"
-    );
+    const data = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
 
     return Array.isArray(data) ? data : [];
-  } catch (error) {
-    console.error("Failed to load chats:", error);
+  } catch {
     return [];
   }
 }
 
-let chats = loadChats();
-let currentChatId = null;
-let isLoading = false;
-
-// =========================
-// ELEMENTS
-// =========================
-
-const input = document.getElementById("promptInput");
-const sendBtn = document.getElementById("sendBtn");
-const welcome = document.getElementById("welcome");
-const chatArea = document.getElementById("chatArea");
-const messages = document.getElementById("messages");
-const historyList = document.getElementById("historyList");
-const sidebar = document.getElementById("sidebar");
-const overlay = document.getElementById("overlay");
-
-// =========================
-// STORAGE
-// =========================
-
 function saveChats() {
   try {
-    localStorage.setItem(
-      "yati_chats",
-      JSON.stringify(chats)
-    );
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(chats));
   } catch (error) {
-    console.error("Unable to save chat history:", error);
+    console.error("Failed saving chats:", error);
+    showToast("Penyimpanan browser penuh.");
   }
 }
 
-function getCurrentChat() {
-  return chats.find(
-    chat => chat.id === currentChatId
+function saveActiveChat() {
+  if (activeChatId) {
+    localStorage.setItem(ACTIVE_CHAT_KEY, activeChatId);
+  } else {
+    localStorage.removeItem(ACTIVE_CHAT_KEY);
+  }
+}
+
+// ==========================================
+// HELPERS
+// ==========================================
+
+function createId() {
+  return (
+    Date.now().toString(36) +
+    Math.random().toString(36).slice(2, 8)
   );
 }
 
-// =========================
-// CHAT MANAGEMENT
-// =========================
-
-function newChat() {
-  currentChatId = null;
-
-  messages.innerHTML = "";
-
-  welcome.classList.remove("hidden");
-  chatArea.classList.add("hidden");
-
-  input.value = "";
-  resizeInput();
-
-  renderHistory();
-  closeSidebar();
-
-  input.focus();
+function getActiveChat() {
+  return chats.find(chat => chat.id === activeChatId) || null;
 }
 
-function createChat(firstMessage) {
+function formatDate(timestamp) {
+  const date = new Date(timestamp);
+  const now = new Date();
+
+  const sameDay =
+    date.getDate() === now.getDate() &&
+    date.getMonth() === now.getMonth() &&
+    date.getFullYear() === now.getFullYear();
+
+  if (sameDay) {
+    return date.toLocaleTimeString("id-ID", {
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+
+  return date.toLocaleDateString("id-ID", {
+    day: "numeric",
+    month: "short"
+  });
+}
+
+function escapeHTML(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function showToast(message) {
+  toastElement.textContent = message;
+  toastElement.classList.add("show");
+
+  clearTimeout(toastTimeout);
+
+  toastTimeout = setTimeout(() => {
+    toastElement.classList.remove("show");
+  }, 2200);
+}
+
+function closeContextMenu() {
+  contextMenu.classList.add("hidden");
+  contextChatId = null;
+}
+
+// ==========================================
+// CHAT CREATION
+// ==========================================
+
+function createChat() {
   const chat = {
-    id: generateId(),
-    title: firstMessage.slice(0, 45),
+    id: createId(),
+    title: "New conversation",
     messages: [],
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    updatedAt: Date.now()
   };
 
   chats.unshift(chat);
 
-  currentChatId = chat.id;
+  activeChatId = chat.id;
 
   saveChats();
+  saveActiveChat();
+
   renderHistory();
+  renderChat();
+
+  promptInput.value = "";
+  resizeInput();
+
+  promptInput.focus();
+
+  closeMobileSidebar();
 
   return chat;
 }
 
-function openChat(id) {
-  const chat = chats.find(
-    item => item.id === id
-  );
+function startNewChat() {
+  if (isGenerating) {
+    showToast("Tunggu respons selesai dulu.");
+    return;
+  }
 
-  if (!chat) return;
-
-  currentChatId = id;
-
-  welcome.classList.add("hidden");
-  chatArea.classList.remove("hidden");
-
-  messages.innerHTML = "";
-
-  chat.messages.forEach(message => {
-    renderMessage(
-      message.role,
-      message.content
-    );
-  });
-
-  renderHistory();
-  closeSidebar();
-  scrollToBottom();
+  createChat();
 }
 
-// =========================
+// ==========================================
+// CHAT TITLE
+// ==========================================
+
+function generateTitle(text) {
+  const cleaned = text
+    .replace(/\n/g, " ")
+    .trim();
+
+  if (!cleaned) return "New conversation";
+
+  return cleaned.length > 40
+    ? cleaned.slice(0, 40).trim() + "…"
+    : cleaned;
+}
+
+// ==========================================
 // HISTORY
-// =========================
+// ==========================================
 
 function renderHistory() {
   historyList.innerHTML = "";
 
+  emptyHistory.classList.toggle(
+    "hidden",
+    chats.length > 0
+  );
+
   chats.forEach(chat => {
-    const item = document.createElement("button");
+    const row = document.createElement("div");
+    row.className = "history-row";
 
-    item.className = "history-item";
-    item.type = "button";
-    item.textContent = chat.title;
-    item.title = chat.title;
+    const chatButton = document.createElement("button");
+    chatButton.className = "history-chat";
 
-    if (chat.id === currentChatId) {
-      item.classList.add("active");
+    if (chat.id === activeChatId) {
+      chatButton.classList.add("active");
     }
 
-    item.addEventListener("click", () => {
-      openChat(chat.id);
+    chatButton.textContent = chat.title || "Untitled";
+    chatButton.title = chat.title || "Untitled";
+
+    chatButton.addEventListener("click", () => {
+      switchChat(chat.id);
     });
 
-    historyList.appendChild(item);
+    const menuButton = document.createElement("button");
+    menuButton.className = "history-menu-button";
+    menuButton.innerHTML = "•••";
+    menuButton.title = "Chat options";
+
+    menuButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openContextMenu(chat.id, menuButton);
+    });
+
+    row.append(chatButton, menuButton);
+    historyList.appendChild(row);
   });
 }
 
-// =========================
+// ==========================================
+// SWITCH CHAT
+// ==========================================
+
+function switchChat(id) {
+  if (isGenerating) return;
+
+  activeChatId = id;
+
+  saveActiveChat();
+
+  renderHistory();
+  renderChat();
+
+  closeContextMenu();
+  closeMobileSidebar();
+}
+
+// ==========================================
+// RENDER CHAT
+// ==========================================
+
+function renderChat() {
+  const chat = getActiveChat();
+
+  if (!chat || !chat.messages.length) {
+    welcome.classList.remove("hidden");
+    chatArea.classList.add("hidden");
+    return;
+  }
+
+  welcome.classList.add("hidden");
+  chatArea.classList.remove("hidden");
+
+  messagesContainer.innerHTML = "";
+
+  chat.messages.forEach(message => {
+    addMessageToDOM(message.role, message.content, false);
+  });
+
+  scrollToBottom(false);
+}
+
+// ==========================================
+// MESSAGE ELEMENT
+// ==========================================
+
+function addMessageToDOM(role, content, scroll = true) {
+  const message = document.createElement("article");
+
+  message.className =
+    role === "user"
+      ? "message user"
+      : "message ai";
+
+  const contentElement = document.createElement("div");
+  contentElement.className = "message-content";
+
+  if (role === "user") {
+    contentElement.textContent = content;
+  } else {
+    contentElement.innerHTML = renderMarkdown(content);
+  }
+
+  message.appendChild(contentElement);
+
+  // AI ACTIONS
+  if (role === "assistant") {
+    const actions = document.createElement("div");
+    actions.className = "message-actions";
+
+    const copyButton = createActionButton(
+      "Copy response",
+      `<svg viewBox="0 0 24 24">
+        <rect x="8" y="8" width="12" height="12" rx="2"/>
+        <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>
+      </svg>`
+    );
+
+    copyButton.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(content);
+        showToast("Response copied.");
+      } catch {
+        showToast("Gagal menyalin response.");
+      }
+    });
+
+    actions.appendChild(copyButton);
+    message.appendChild(actions);
+  }
+
+  messagesContainer.appendChild(message);
+
+  if (scroll) scrollToBottom();
+
+  return message;
+}
+
+function createActionButton(title, icon) {
+  const button = document.createElement("button");
+
+  button.className = "message-action";
+  button.title = title;
+  button.innerHTML = icon;
+
+  return button;
+}
+
+// ==========================================
 // MARKDOWN
-// =========================
+// ==========================================
 
-function renderMarkdown(content) {
-  if (!window.marked || !window.DOMPurify) {
-    return null;
+function renderMarkdown(text) {
+  if (window.marked && window.DOMPurify) {
+    const html = marked.parse(String(text), {
+      breaks: true,
+      gfm: true
+    });
+
+    return DOMPurify.sanitize(html);
   }
 
-  try {
-    const html = window.marked.parse(content);
-
-    return window.DOMPurify.sanitize(html);
-  } catch (error) {
-    console.error("Markdown rendering error:", error);
-    return null;
-  }
+  return escapeHTML(text).replace(/\n/g, "<br>");
 }
 
-// =========================
-// MESSAGE RENDER
-// =========================
+// ==========================================
+// SCROLL
+// ==========================================
 
-function renderMessage(role, content) {
-  const wrapper = document.createElement("div");
-
-  const normalizedRole =
-    role === "user" ? "user" : "ai";
-
-  wrapper.className = `message ${normalizedRole}`;
-
-  const label = document.createElement("div");
-  label.className = "message-label";
-
-  if (normalizedRole === "user") {
-    label.textContent = "You";
-  } else {
-    label.innerHTML =
-      '<span class="ai-label-icon">✳</span> Yati';
-  }
-
-  const body = document.createElement("div");
-  body.className = "message-content";
-
-  if (normalizedRole === "ai") {
-    const rendered = renderMarkdown(content);
-
-    if (rendered !== null) {
-      body.innerHTML = rendered;
-    } else {
-      body.textContent = content;
-    }
-  } else {
-    body.textContent = content;
-  }
-
-  wrapper.appendChild(label);
-  wrapper.appendChild(body);
-
-  messages.appendChild(wrapper);
-
-  scrollToBottom();
-
-  return wrapper;
+function scrollToBottom(smooth = true) {
+  requestAnimationFrame(() => {
+    chatScroll.scrollTo({
+      top: chatScroll.scrollHeight,
+      behavior: smooth ? "smooth" : "instant"
+    });
+  });
 }
 
-// =========================
-// TYPING INDICATOR
-// =========================
+// ==========================================
+// LOADING
+// ==========================================
 
-function showTyping() {
-  const wrapper = document.createElement("div");
+function showTypingIndicator() {
+  const indicator = document.createElement("article");
 
-  wrapper.className = "message ai";
-  wrapper.id = "typingIndicator";
+  indicator.className = "message ai";
+  indicator.id = "typingIndicator";
 
-  wrapper.innerHTML = `
-    <div class="message-label">
-      <span class="ai-label-icon">✳</span> Yati
-    </div>
-
-    <div class="typing">
-      <span></span>
-      <span></span>
-      <span></span>
+  indicator.innerHTML = `
+    <div class="message-content">
+      <div class="typing-indicator">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
     </div>
   `;
 
-  messages.appendChild(wrapper);
+  messagesContainer.appendChild(indicator);
 
   scrollToBottom();
+
+  return indicator;
 }
 
-function removeTyping() {
-  document.getElementById("typingIndicator")?.remove();
+function removeTypingIndicator() {
+  $("#typingIndicator")?.remove();
 }
 
-// =========================
-// SCROLL
-// =========================
+// ==========================================
+// SEND MESSAGE
+// ==========================================
 
-function scrollToBottom() {
-  requestAnimationFrame(() => {
-    chatArea.scrollTop = chatArea.scrollHeight;
-  });
-}
+async function sendMessage(customText = null) {
+  if (isGenerating) return;
 
-// =========================
-// INPUT RESIZE
-// =========================
+  const text = (
+    customText !== null
+      ? customText
+      : promptInput.value
+  ).trim();
 
-function resizeInput() {
-  input.style.height = "auto";
+  if (!text) return;
 
-  input.style.height =
-    Math.min(input.scrollHeight, 180) + "px";
-}
+  let chat = getActiveChat();
 
-// =========================
-// INPUT EVENTS
-// =========================
+  if (!chat) {
+    chat = createChat();
+  }
 
-input.addEventListener("input", () => {
+  const userMessage = {
+    role: "user",
+    content: text,
+    timestamp: Date.now()
+  };
+
+  // SAVE USER MESSAGE
+  chat.messages.push(userMessage);
+
+  // AUTO TITLE
+  if (
+    chat.title === "New conversation" &&
+    chat.messages.filter(m => m.role === "user").length === 1
+  ) {
+    chat.title = generateTitle(text);
+  }
+
+  chat.updatedAt = Date.now();
+
+  saveChats();
+  renderHistory();
+
+  // SHOW CHAT
+  welcome.classList.add("hidden");
+  chatArea.classList.remove("hidden");
+
+  addMessageToDOM("user", text);
+
+  promptInput.value = "";
   resizeInput();
 
-  sendBtn.disabled =
-    !input.value.trim() || isLoading;
-});
+  setGenerating(true);
 
-input.addEventListener("keydown", event => {
-  if (
-    event.key === "Enter" &&
-    !event.shiftKey
-  ) {
-    event.preventDefault();
-    sendMessage();
-  }
-});
-
-sendBtn.addEventListener("click", () => {
-  sendMessage();
-});
-
-// =========================
-// API REQUEST
-// =========================
-
-async function requestYati(messagesToSend) {
-  const controller = new AbortController();
-
-  let timeoutTriggered = false;
-
-  const timeoutId = setTimeout(() => {
-    timeoutTriggered = true;
-    controller.abort();
-  }, REQUEST_TIMEOUT);
+  const typing = showTypingIndicator();
 
   try {
-    console.log("Yati request started:", {
-      url: API_URL,
-      origin: window.location.origin,
-      timestamp: new Date().toISOString()
-    });
+    const conversationHistory = chat.messages
+      .slice(-20)
+      .map(message => ({
+        role: message.role === "assistant" ? "model" : "user",
+        content: message.content
+      }));
 
     const response = await fetch(API_URL, {
       method: "POST",
@@ -343,244 +495,387 @@ async function requestYati(messagesToSend) {
       },
 
       body: JSON.stringify({
-        messages: messagesToSend
-      }),
-
-      signal: controller.signal
-    });
-
-    const responseText = await response.text();
-
-    let data;
-
-    try {
-      data = JSON.parse(responseText);
-    } catch {
-      data = {
-        error: responseText || "Server returned an empty response."
-      };
-    }
-
-    console.log("Yati response received:", {
-      status: response.status,
-      ok: response.ok
+        message: text,
+        history: conversationHistory
+      })
     });
 
     if (!response.ok) {
-      throw new Error(
-        `HTTP ${response.status}: ${
-          data.error || data.message || responseText || "Request failed"
-        }`
-      );
+      throw new Error(`HTTP ${response.status}`);
     }
 
-    if (!data.reply) {
-      throw new Error(
-        data.error || "AI tidak memberikan jawaban."
-      );
+    const data = await response.json();
+
+    const aiText =
+      data.reply ??
+      data.response ??
+      data.text ??
+      data.message;
+
+    if (typeof aiText !== "string" || !aiText.trim()) {
+      throw new Error("Empty AI response");
     }
 
-    return data;
-
-  } catch (error) {
-    if (timeoutTriggered) {
-      throw new Error(
-        `Request timeout setelah ${REQUEST_TIMEOUT / 1000} detik.`
-      );
-    }
-
-    if (error.name === "AbortError") {
-      throw new Error(
-        "Request dibatalkan oleh browser."
-      );
-    }
-
-    // Fetch TypeError is often a network, TLS,
-    // CORS, DNS, or browser-level failure.
-    if (error.name === "TypeError") {
-      throw new Error(
-        `Fetch gagal: ${error.message}. Kemungkinan koneksi, SSL/TLS, DNS, atau CORS.`
-      );
-    }
-
-    throw error;
-
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-// =========================
-// SEND MESSAGE
-// =========================
-
-async function sendMessage(customPrompt = null) {
-  if (isLoading) return;
-
-  const text = (
-    customPrompt ?? input.value
-  ).trim();
-
-  if (!text) return;
-
-  if (
-    API_URL.includes("YOUR_CLOUDFLARE") ||
-    !API_URL.startsWith("https://")
-  ) {
-    alert("URL backend belum dikonfigurasi.");
-    return;
-  }
-
-  isLoading = true;
-  sendBtn.disabled = true;
-
-  input.value = "";
-  resizeInput();
-
-  welcome.classList.add("hidden");
-  chatArea.classList.remove("hidden");
-
-  // Get or create chat
-  let chat = getCurrentChat();
-
-  if (!chat) {
-    chat = createChat(text);
-  }
-
-  // Save user message
-  const userMessage = {
-    role: "user",
-    content: text
-  };
-
-  chat.messages.push(userMessage);
-
-  saveChats();
-
-  renderMessage("user", text);
-
-  showTyping();
-
-  try {
-    const data = await requestYati(chat.messages);
-
-    removeTyping();
+    removeTypingIndicator();
 
     const assistantMessage = {
       role: "assistant",
-      content: data.reply
+      content: aiText,
+      timestamp: Date.now()
     };
 
     chat.messages.push(assistantMessage);
+    chat.updatedAt = Date.now();
 
     saveChats();
 
-    renderMessage(
-      "assistant",
-      data.reply
-    );
+    addMessageToDOM("assistant", aiText);
+
+    renderHistory();
 
   } catch (error) {
-    removeTyping();
+    console.error("Yati API error:", error);
 
-    const errorName = error?.name || "UnknownError";
+    removeTypingIndicator();
+
     const errorMessage =
-      error?.message || String(error);
+      "Maaf, Yati belum bisa merespons saat ini. Coba periksa koneksi internet kamu dan kirim pesan lagi.";
 
-    console.error("Yati diagnostic error:", {
-      name: errorName,
-      message: errorMessage,
-      endpoint: API_URL,
-      origin: window.location.origin,
-      userAgent: navigator.userAgent,
-      timestamp: new Date().toISOString()
-    });
+    addMessageToDOM("assistant", errorMessage);
 
-    renderMessage(
-      "assistant",
-      `⚠️ **Yati mengalami kendala koneksi**
-
-**Jenis error:** \`${errorName}\`
-
-**Detail:** \`${errorMessage}\`
-
-**Endpoint:** \`${API_URL}\`
-
-Silakan coba kembali. Jika error berlanjut, kirim screenshot pesan ini kepada pengembang Yati.`
-    );
-
+    showToast("Connection failed.");
   } finally {
-    isLoading = false;
-
-    sendBtn.disabled =
-      !input.value.trim();
-
-    input.focus();
+    setGenerating(false);
+    promptInput.focus();
   }
 }
 
-// =========================
-// QUICK PROMPTS
-// =========================
+// ==========================================
+// GENERATION STATE
+// ==========================================
 
-document.querySelectorAll(".suggestion").forEach(button => {
+function setGenerating(state) {
+  isGenerating = state;
+
+  sendButton.disabled =
+    state || promptInput.value.trim().length === 0;
+
+  sendButton.innerHTML = state
+    ? `
+      <svg viewBox="0 0 24 24">
+        <rect x="7" y="7" width="10" height="10" rx="2"/>
+      </svg>
+    `
+    : `
+      <svg viewBox="0 0 24 24">
+        <path d="M12 19V5M5 12l7-7 7 7"/>
+      </svg>
+    `;
+}
+
+// ==========================================
+// INPUT
+// ==========================================
+
+function resizeInput() {
+  promptInput.style.height = "auto";
+
+  promptInput.style.height =
+    Math.min(promptInput.scrollHeight, 180) + "px";
+
+  sendButton.disabled =
+    isGenerating || promptInput.value.trim().length === 0;
+}
+
+promptInput.addEventListener("input", resizeInput);
+
+promptInput.addEventListener("keydown", event => {
+  if (
+    event.key === "Enter" &&
+    !event.shiftKey &&
+    !event.isComposing
+  ) {
+    event.preventDefault();
+    sendMessage();
+  }
+});
+
+sendButton.addEventListener("click", () => sendMessage());
+
+// ==========================================
+// QUICK PROMPTS
+// ==========================================
+
+document.querySelectorAll(".quick-prompt").forEach(button => {
   button.addEventListener("click", () => {
     const prompt = button.dataset.prompt;
-
     sendMessage(prompt);
   });
 });
 
-// =========================
+// ==========================================
 // NEW CHAT
-// =========================
+// ==========================================
 
-document
-  .getElementById("newChat")
-  .addEventListener("click", newChat);
+newChatButton.addEventListener("click", startNewChat);
 
-// =========================
+// ==========================================
 // SIDEBAR
-// =========================
+// ==========================================
 
-document
-  .getElementById("menuBtn")
-  .addEventListener("click", openSidebar);
-
-document
-  .getElementById("closeSidebar")
-  .addEventListener("click", closeSidebar);
-
-overlay.addEventListener("click", closeSidebar);
-
-function openSidebar() {
-  sidebar.classList.add("open");
-  overlay.classList.add("show");
+function openMobileSidebar() {
+  sidebar.classList.add("mobile-open");
+  sidebarOverlay.classList.add("show");
 }
 
-function closeSidebar() {
-  sidebar.classList.remove("open");
-  overlay.classList.remove("show");
+function closeMobileSidebar() {
+  sidebar.classList.remove("mobile-open");
+  sidebarOverlay.classList.remove("show");
 }
 
-// =========================
-// LEARNING CENTER
-// =========================
+openSidebarButton.addEventListener("click", () => {
+  if (window.innerWidth <= 760) {
+    openMobileSidebar();
+  } else {
+    app.classList.remove("sidebar-collapsed");
+  }
+});
 
-document
-  .getElementById("learningBtn")
-  .addEventListener("click", () => {
-    sendMessage(
-      "Buatkan aku daftar materi belajar akuntansi dari pemula hingga mahir, susun menjadi kurikulum bertahap."
+collapseSidebarButton.addEventListener("click", () => {
+  if (window.innerWidth <= 760) {
+    closeMobileSidebar();
+  } else {
+    app.classList.add("sidebar-collapsed");
+  }
+});
+
+sidebarOverlay.addEventListener("click", closeMobileSidebar);
+
+// ==========================================
+// SEARCH
+// ==========================================
+
+function openSearch() {
+  searchModal.classList.remove("hidden");
+
+  searchInput.value = "";
+  renderSearchResults("");
+
+  setTimeout(() => searchInput.focus(), 50);
+}
+
+function closeSearch() {
+  searchModal.classList.add("hidden");
+}
+
+searchButton.addEventListener("click", openSearch);
+closeSearchButton.addEventListener("click", closeSearch);
+
+searchModal.addEventListener("click", event => {
+  if (event.target === searchModal) {
+    closeSearch();
+  }
+});
+
+searchInput.addEventListener("input", () => {
+  renderSearchResults(searchInput.value);
+});
+
+function renderSearchResults(query) {
+  const normalized = query.trim().toLowerCase();
+
+  const filtered = chats.filter(chat => {
+    if (!normalized) return true;
+
+    const inTitle = chat.title.toLowerCase().includes(normalized);
+
+    const inMessages = chat.messages.some(message =>
+      message.content.toLowerCase().includes(normalized)
     );
+
+    return inTitle || inMessages;
   });
 
-// =========================
+  searchResults.innerHTML = "";
+
+  if (!filtered.length) {
+    searchResults.innerHTML = `
+      <div class="search-empty">
+        No conversations found.
+      </div>
+    `;
+    return;
+  }
+
+  filtered.forEach(chat => {
+    const result = document.createElement("button");
+    result.className = "search-result";
+
+    const title = document.createElement("strong");
+    title.textContent = chat.title;
+
+    const lastMessage = chat.messages.at(-1)?.content || "Empty conversation";
+
+    const description = document.createElement("small");
+    description.textContent =
+      lastMessage.slice(0, 100);
+
+    result.append(title, description);
+
+    result.addEventListener("click", () => {
+      switchChat(chat.id);
+      closeSearch();
+    });
+
+    searchResults.appendChild(result);
+  });
+}
+
+// ==========================================
+// CHAT CONTEXT MENU
+// ==========================================
+
+function openContextMenu(chatId, button) {
+  contextChatId = chatId;
+
+  const rect = button.getBoundingClientRect();
+
+  contextMenu.style.left = Math.min(
+    rect.left,
+    window.innerWidth - 170
+  ) + "px";
+
+  contextMenu.style.top = Math.min(
+    rect.bottom + 4,
+    window.innerHeight - 100
+  ) + "px";
+
+  contextMenu.classList.remove("hidden");
+}
+
+renameButton.addEventListener("click", () => {
+  const chat = chats.find(c => c.id === contextChatId);
+
+  if (!chat) return;
+
+  const newTitle = prompt("Rename conversation:", chat.title);
+
+  if (newTitle && newTitle.trim()) {
+    chat.title = newTitle.trim().slice(0, 100);
+
+    saveChats();
+    renderHistory();
+
+    showToast("Conversation renamed.");
+  }
+
+  closeContextMenu();
+});
+
+deleteButton.addEventListener("click", () => {
+  const chat = chats.find(c => c.id === contextChatId);
+
+  if (!chat) return;
+
+  const confirmed = confirm(`Delete "${chat.title}"?`);
+
+  if (!confirmed) {
+    closeContextMenu();
+    return;
+  }
+
+  chats = chats.filter(c => c.id !== contextChatId);
+
+  if (activeChatId === contextChatId) {
+    activeChatId = chats[0]?.id || null;
+  }
+
+  saveChats();
+  saveActiveChat();
+
+  renderHistory();
+  renderChat();
+
+  closeContextMenu();
+
+  showToast("Conversation deleted.");
+});
+
+// ==========================================
+// GLOBAL EVENTS
+// ==========================================
+
+document.addEventListener("click", event => {
+  if (!contextMenu.contains(event.target)) {
+    closeContextMenu();
+  }
+});
+
+document.addEventListener("keydown", event => {
+  // ESC
+  if (event.key === "Escape") {
+    closeSearch();
+    closeContextMenu();
+    closeMobileSidebar();
+  }
+
+  // CTRL/CMD + K
+  if (
+    (event.ctrlKey || event.metaKey) &&
+    event.key.toLowerCase() === "k"
+  ) {
+    event.preventDefault();
+    openSearch();
+  }
+
+  // CTRL/CMD + SHIFT + O -> New chat
+  if (
+    (event.ctrlKey || event.metaKey) &&
+    event.shiftKey &&
+    event.key.toLowerCase() === "o"
+  ) {
+    event.preventDefault();
+    startNewChat();
+  }
+});
+
+// ==========================================
+// LEARNING BUTTON
+// ==========================================
+
+$("#learningBtn").addEventListener("click", () => {
+  promptInput.value = "Aku ingin belajar akuntansi. Tolong buatkan materi pembelajaran yang terstruktur dari dasar dan ajari aku secara bertahap.";
+  resizeInput();
+  promptInput.focus();
+});
+
+// ==========================================
 // INITIALIZATION
-// =========================
+// ==========================================
 
-renderHistory();
+function initialize() {
+  chats = loadChats();
 
-console.log("Yati Accounting AI initialized.");
-console.log("Frontend origin:", window.location.origin);
-console.log("API endpoint:", API_URL);
+  // Check saved active chat
+  const savedChat = chats.find(chat => chat.id === activeChatId);
+
+  if (!savedChat) {
+    activeChatId = null;
+  }
+
+  renderHistory();
+
+  if (activeChatId) {
+    renderChat();
+  } else {
+    welcome.classList.remove("hidden");
+    chatArea.classList.add("hidden");
+  }
+
+  saveActiveChat();
+  resizeInput();
+
+  console.log("Yati AI 2.0 initialized.");
+}
+
+initialize();
