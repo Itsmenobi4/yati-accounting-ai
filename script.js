@@ -1,7 +1,7 @@
 
 /* ==========================================
    YATI AI 2.0 — FRONTEND ENGINE
-   FIXED: MULTI ROOM + DELETE PERSISTENCE
+   MULTI-ROOM ISOLATION REBUILD
 ========================================== */
 
 const API_URL = "https://yati-accounting-api.fadhilmusyaffa999.workers.dev/api/chat";
@@ -18,7 +18,7 @@ const MAX_HISTORY = 20;
 // DOM
 // ==========================================
 
-const $ = (selector) => document.querySelector(selector);
+const $ = selector => document.querySelector(selector);
 
 const app = $("#app");
 const sidebar = $("#sidebar");
@@ -58,11 +58,12 @@ const toastElement = $("#toast");
 let chats = [];
 let activeChatId = null;
 
-let isGenerating = false;
 let contextChatId = null;
-let generatingChatId = null;
-
 let toastTimeout = null;
+
+// Request tracking: room-specific, not global.
+const pendingRequests = new Map();
+const requestTokens = new Map();
 
 // ==========================================
 // STORAGE
@@ -71,10 +72,7 @@ let toastTimeout = null;
 function readJSON(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
-
-    if (!raw) return fallback;
-
-    return JSON.parse(raw);
+    return raw ? JSON.parse(raw) : fallback;
   } catch {
     return fallback;
   }
@@ -82,7 +80,6 @@ function readJSON(key, fallback) {
 
 function getDeletedChatIDs() {
   const data = readJSON(DELETED_CHATS_KEY, []);
-
   return new Set(
     Array.isArray(data)
       ? data.filter(id => typeof id === "string")
@@ -92,10 +89,7 @@ function getDeletedChatIDs() {
 
 function saveDeletedChatIDs(ids) {
   try {
-    localStorage.setItem(
-      DELETED_CHATS_KEY,
-      JSON.stringify([...ids])
-    );
+    localStorage.setItem(DELETED_CHATS_KEY, JSON.stringify([...ids]));
   } catch (error) {
     console.error("Failed saving deleted chats:", error);
   }
@@ -127,7 +121,10 @@ function normalizeChat(chat) {
         : "New conversation",
     messages,
     createdAt: Number(chat.createdAt) || Date.now(),
-    updatedAt: Number(chat.updatedAt) || Number(chat.createdAt) || Date.now()
+    updatedAt:
+      Number(chat.updatedAt) ||
+      Number(chat.createdAt) ||
+      Date.now()
   };
 }
 
@@ -137,23 +134,19 @@ function loadChats() {
 
   if (!Array.isArray(stored)) return [];
 
-  const validChats = stored
+  chats = stored
     .map(normalizeChat)
     .filter(Boolean)
-    .filter(chat => !deletedIDs.has(chat.id));
-
-  // Remove invalid or previously deleted chats from storage.
-  chats = validChats.slice(0, MAX_STORED_CHATS);
+    .filter(chat => !deletedIDs.has(chat.id))
+    .slice(0, MAX_STORED_CHATS);
 
   saveChats();
-
   return chats;
 }
 
 function saveChats() {
   const deletedIDs = getDeletedChatIDs();
 
-  // Prevent deleted rooms from being reintroduced.
   chats = chats
     .map(normalizeChat)
     .filter(Boolean)
@@ -169,7 +162,7 @@ function saveChats() {
 }
 
 function saveActiveChat() {
-  if (activeChatId && chats.some(chat => chat.id === activeChatId)) {
+  if (activeChatId && chatExists(activeChatId)) {
     localStorage.setItem(ACTIVE_CHAT_KEY, activeChatId);
   } else {
     activeChatId = null;
@@ -195,7 +188,6 @@ function getMemoryUserID() {
   }
 
   localStorage.setItem(MEMORY_USER_KEY, id);
-
   return id;
 }
 
@@ -213,11 +205,20 @@ function createId() {
 }
 
 function getActiveChat() {
+  if (!activeChatId) return null;
   return chats.find(chat => chat.id === activeChatId) || null;
 }
 
+function getChatByID(id) {
+  return chats.find(chat => chat.id === id) || null;
+}
+
 function chatExists(id) {
-  return chats.some(chat => chat.id === id);
+  return Boolean(getChatByID(id));
+}
+
+function isRoomGenerating(id) {
+  return pendingRequests.has(id);
 }
 
 function formatDate(timestamp) {
@@ -252,6 +253,8 @@ function escapeHTML(text) {
 }
 
 function showToast(message) {
+  if (!toastElement) return;
+
   toastElement.textContent = message;
   toastElement.classList.add("show");
 
@@ -263,7 +266,7 @@ function showToast(message) {
 }
 
 function closeContextMenu() {
-  contextMenu.classList.add("hidden");
+  contextMenu?.classList.add("hidden");
   contextChatId = null;
 }
 
@@ -272,24 +275,24 @@ function closeContextMenu() {
 // ==========================================
 
 function createChat() {
+  const now = Date.now();
+
   const chat = {
     id: createId(),
     title: "New conversation",
     messages: [],
-    createdAt: Date.now(),
-    updatedAt: Date.now()
+    createdAt: now,
+    updatedAt: now
   };
 
-  // Always create a completely separate room.
   chats.unshift(chat);
-
   activeChatId = chat.id;
 
   saveChats();
   saveActiveChat();
 
   renderHistory();
-  renderChat();
+  renderChatFor(chat.id);
 
   promptInput.value = "";
   resizeInput();
@@ -301,12 +304,6 @@ function createChat() {
 }
 
 function startNewChat() {
-  if (isGenerating) {
-    showToast("Tunggu respons selesai dulu.");
-    return;
-  }
-
-  // Explicitly clear the input and activate a new empty room.
   promptInput.value = "";
   resizeInput();
 
@@ -318,9 +315,7 @@ function startNewChat() {
 // ==========================================
 
 function generateTitle(text) {
-  const cleaned = text
-    .replace(/\n/g, " ")
-    .trim();
+  const cleaned = text.replace(/\n/g, " ").trim();
 
   if (!cleaned) return "New conversation";
 
@@ -330,16 +325,13 @@ function generateTitle(text) {
 }
 
 // ==========================================
-// HISTORY
+// HISTORY SIDEBAR
 // ==========================================
 
 function renderHistory() {
   historyList.innerHTML = "";
 
-  emptyHistory.classList.toggle(
-    "hidden",
-    chats.length > 0
-  );
+  emptyHistory.classList.toggle("hidden", chats.length > 0);
 
   chats.forEach(chat => {
     const row = document.createElement("div");
@@ -375,43 +367,47 @@ function renderHistory() {
 }
 
 // ==========================================
-// SWITCH CHAT
+// SWITCH ROOM
 // ==========================================
 
 function switchChat(id) {
-  if (isGenerating) return;
+  const target = getChatByID(id);
 
-  const target = chats.find(chat => chat.id === id);
-
-  // Never switch to an invalid/deleted room.
   if (!target) {
     showToast("Conversation tidak ditemukan.");
     return;
   }
 
+  // Switch room immediately, even if another room is generating.
   activeChatId = target.id;
 
   saveActiveChat();
 
   renderHistory();
-  renderChat();
+  renderChatFor(target.id);
 
   closeContextMenu();
   closeMobileSidebar();
+
+  promptInput.focus();
 }
 
 // ==========================================
-// RENDER CHAT
+// ROOM-LOCKED RENDER
 // ==========================================
 
-function renderChat() {
-  const chat = getActiveChat();
+function renderChatFor(roomID) {
+  // Never render a room that isn't currently active.
+  if (roomID !== activeChatId) return;
 
-  messagesContainer.innerHTML = "";
+  const chat = getChatByID(roomID);
 
-  if (!chat || !chat.messages.length) {
+  messagesContainer.replaceChildren();
+
+  if (!chat || chat.messages.length === 0) {
     welcome.classList.remove("hidden");
     chatArea.classList.add("hidden");
+    updateSendButton();
     return;
   }
 
@@ -422,14 +418,31 @@ function renderChat() {
     addMessageToDOM(message.role, message.content, false);
   });
 
+  if (isRoomGenerating(roomID)) {
+    showTypingIndicator(roomID);
+  }
+
   scrollToBottom(false);
+  updateSendButton();
+}
+
+function renderChat() {
+  if (!activeChatId) {
+    messagesContainer.replaceChildren();
+    welcome.classList.remove("hidden");
+    chatArea.classList.add("hidden");
+    updateSendButton();
+    return;
+  }
+
+  renderChatFor(activeChatId);
 }
 
 // ==========================================
 // MESSAGE ELEMENT
 // ==========================================
 
-function addMessageToDOM(role, content, scroll = true) {
+function addMessageToDOM(role, content, shouldScroll = true) {
   const message = document.createElement("article");
 
   message.className =
@@ -448,7 +461,6 @@ function addMessageToDOM(role, content, scroll = true) {
 
   message.appendChild(contentElement);
 
-  // AI ACTIONS
   if (role === "assistant") {
     const actions = document.createElement("div");
     actions.className = "message-actions";
@@ -476,7 +488,7 @@ function addMessageToDOM(role, content, scroll = true) {
 
   messagesContainer.appendChild(message);
 
-  if (scroll) scrollToBottom();
+  if (shouldScroll) scrollToBottom();
 
   return message;
 }
@@ -522,12 +534,15 @@ function scrollToBottom(smooth = true) {
 }
 
 // ==========================================
-// LOADING
+// ROOM-SPECIFIC TYPING INDICATOR
 // ==========================================
 
-function showTypingIndicator() {
-  const indicator = document.createElement("article");
+function showTypingIndicator(roomID) {
+  if (roomID !== activeChatId) return;
 
+  removeTypingIndicator();
+
+  const indicator = document.createElement("article");
   indicator.className = "message ai";
   indicator.id = "typingIndicator";
 
@@ -542,23 +557,22 @@ function showTypingIndicator() {
   `;
 
   messagesContainer.appendChild(indicator);
-
   scrollToBottom();
 
   return indicator;
 }
 
-function removeTypingIndicator() {
+function removeTypingIndicator(roomID = null) {
+  if (roomID && roomID !== activeChatId) return;
+
   $("#typingIndicator")?.remove();
 }
 
 // ==========================================
-// SEND MESSAGE
+// SEND MESSAGE — ROOM ISOLATED
 // ==========================================
 
 async function sendMessage(customText = null) {
-  if (isGenerating) return;
-
   const text = (
     customText !== null
       ? customText
@@ -573,9 +587,15 @@ async function sendMessage(customText = null) {
     chat = createChat();
   }
 
-  // Capture the room ID before the request.
-  const requestChatID = chat.id;
+  const roomID = chat.id;
 
+  // Prevent duplicate requests in the same room only.
+  if (isRoomGenerating(roomID)) {
+    showToast("Respons room ini sedang diproses.");
+    return;
+  }
+
+  // Create immutable request history.
   const userMessage = {
     role: "user",
     content: text,
@@ -586,7 +606,7 @@ async function sendMessage(customText = null) {
 
   if (
     chat.title === "New conversation" &&
-    chat.messages.filter(m => m.role === "user").length === 1
+    chat.messages.filter(message => message.role === "user").length === 1
   ) {
     chat.title = generateTitle(text);
   }
@@ -596,29 +616,37 @@ async function sendMessage(customText = null) {
   saveChats();
   renderHistory();
 
-  welcome.classList.add("hidden");
-  chatArea.classList.remove("hidden");
-
-  addMessageToDOM("user", text);
+  // Only update visible DOM for the room that owns this message.
+  if (activeChatId === roomID) {
+    welcome.classList.add("hidden");
+    chatArea.classList.remove("hidden");
+    addMessageToDOM("user", text);
+  }
 
   promptInput.value = "";
   resizeInput();
 
-  setGenerating(true);
+  // Room-specific request token.
+  const token = createId();
 
-  generatingChatId = requestChatID;
+  requestTokens.set(roomID, token);
+  pendingRequests.set(roomID, true);
 
-  showTypingIndicator();
+  updateSendButton();
+
+  if (activeChatId === roomID) {
+    showTypingIndicator(roomID);
+  }
+
+  // Snapshot history. This array will not change during the request.
+  const historySnapshot = chat.messages
+    .slice(-MAX_HISTORY)
+    .map(message => ({
+      role: message.role === "assistant" ? "model" : "user",
+      content: message.content
+    }));
 
   try {
-    // Only this room's messages are sent to Gemini.
-    const conversationHistory = chat.messages
-      .slice(-MAX_HISTORY)
-      .map(message => ({
-        role: message.role === "assistant" ? "model" : "user",
-        content: message.content
-      }));
-
     const response = await fetch(API_URL, {
       method: "POST",
       headers: {
@@ -626,7 +654,7 @@ async function sendMessage(customText = null) {
       },
       body: JSON.stringify({
         message: text,
-        history: conversationHistory,
+        history: historySnapshot,
         memoryUserId: memoryUserID
       })
     });
@@ -648,13 +676,15 @@ async function sendMessage(customText = null) {
       throw new Error("Empty AI response");
     }
 
-    removeTypingIndicator();
+    // Reject stale requests.
+    if (requestTokens.get(roomID) !== token) {
+      return;
+    }
 
-    // Don't resurrect a room if it was deleted during the request.
-    const currentChat = chats.find(c => c.id === requestChatID);
+    // Locate original room by ID. Never use currently active room.
+    const originalRoom = getChatByID(roomID);
 
-    if (!currentChat) {
-      showToast("Room sudah dihapus.");
+    if (!originalRoom) {
       return;
     }
 
@@ -664,13 +694,14 @@ async function sendMessage(customText = null) {
       timestamp: Date.now()
     };
 
-    currentChat.messages.push(assistantMessage);
-    currentChat.updatedAt = Date.now();
+    originalRoom.messages.push(assistantMessage);
+    originalRoom.updatedAt = Date.now();
 
     saveChats();
 
-    // Render only if the same room is still active.
-    if (activeChatId === requestChatID) {
+    // Only render if the original room is still open.
+    if (activeChatId === roomID) {
+      removeTypingIndicator(roomID);
       addMessageToDOM("assistant", aiText);
     }
 
@@ -679,40 +710,51 @@ async function sendMessage(customText = null) {
   } catch (error) {
     console.error("Yati API error:", error);
 
-    removeTypingIndicator();
+    if (requestTokens.get(roomID) !== token) {
+      return;
+    }
 
-    const currentChat = chats.find(c => c.id === requestChatID);
+    const originalRoom = getChatByID(roomID);
 
-    if (!currentChat) return;
+    if (originalRoom && activeChatId === roomID) {
+      removeTypingIndicator(roomID);
 
-    const errorMessage =
-      "Maaf, Yati belum bisa merespons saat ini. Coba periksa koneksi internet kamu dan kirim pesan lagi.";
-
-    // Don't save API error as permanent chat history.
-    if (activeChatId === requestChatID) {
-      addMessageToDOM("assistant", errorMessage);
+      addMessageToDOM(
+        "assistant",
+        "Maaf, Yati belum bisa merespons saat ini. Coba periksa koneksi internet kamu dan kirim pesan lagi."
+      );
     }
 
     showToast("Connection failed.");
 
   } finally {
-    setGenerating(false);
-    generatingChatId = null;
-    promptInput.focus();
+    // Only clear this room's request state.
+    if (requestTokens.get(roomID) === token) {
+      requestTokens.delete(roomID);
+      pendingRequests.delete(roomID);
+    }
+
+    updateSendButton();
+
+    if (activeChatId === roomID) {
+      promptInput.focus();
+    }
   }
 }
 
 // ==========================================
-// GENERATION STATE
+// SEND BUTTON STATE
 // ==========================================
 
-function setGenerating(state) {
-  isGenerating = state;
+function updateSendButton() {
+  const activeGenerating = activeChatId
+    ? isRoomGenerating(activeChatId)
+    : false;
 
   sendButton.disabled =
-    state || promptInput.value.trim().length === 0;
+    activeGenerating || promptInput.value.trim().length === 0;
 
-  sendButton.innerHTML = state
+  sendButton.innerHTML = activeGenerating
     ? `
       <svg viewBox="0 0 24 24">
         <rect x="7" y="7" width="10" height="10" rx="2"/>
@@ -735,8 +777,7 @@ function resizeInput() {
   promptInput.style.height =
     Math.min(promptInput.scrollHeight, 180) + "px";
 
-  sendButton.disabled =
-    isGenerating || promptInput.value.trim().length === 0;
+  updateSendButton();
 }
 
 promptInput.addEventListener("input", resizeInput);
@@ -760,8 +801,7 @@ sendButton.addEventListener("click", () => sendMessage());
 
 document.querySelectorAll(".quick-prompt").forEach(button => {
   button.addEventListener("click", () => {
-    const prompt = button.dataset.prompt;
-    sendMessage(prompt);
+    sendMessage(button.dataset.prompt);
   });
 });
 
@@ -809,7 +849,6 @@ sidebarOverlay.addEventListener("click", closeMobileSidebar);
 
 function openSearch() {
   searchModal.classList.remove("hidden");
-
   searchInput.value = "";
   renderSearchResults("");
 
@@ -824,9 +863,7 @@ searchButton.addEventListener("click", openSearch);
 closeSearchButton.addEventListener("click", closeSearch);
 
 searchModal.addEventListener("click", event => {
-  if (event.target === searchModal) {
-    closeSearch();
-  }
+  if (event.target === searchModal) closeSearch();
 });
 
 searchInput.addEventListener("input", () => {
@@ -887,10 +924,10 @@ function renderSearchResults(query) {
 // CHAT CONTEXT MENU
 // ==========================================
 
-function openContextMenu(chatId, button) {
-  if (!chatExists(chatId)) return;
+function openContextMenu(chatID, button) {
+  if (!chatExists(chatID)) return;
 
-  contextChatId = chatId;
+  contextChatId = chatID;
 
   const rect = button.getBoundingClientRect();
 
@@ -908,8 +945,9 @@ function openContextMenu(chatId, button) {
 }
 
 // RENAME
+
 renameButton.addEventListener("click", () => {
-  const chat = chats.find(c => c.id === contextChatId);
+  const chat = getChatByID(contextChatId);
 
   if (!chat) {
     closeContextMenu();
@@ -931,9 +969,10 @@ renameButton.addEventListener("click", () => {
 });
 
 // DELETE
+
 deleteButton.addEventListener("click", () => {
   const chatID = contextChatId;
-  const chat = chats.find(c => c.id === chatID);
+  const chat = getChatByID(chatID);
 
   if (!chat) {
     closeContextMenu();
@@ -947,10 +986,14 @@ deleteButton.addEventListener("click", () => {
     return;
   }
 
-  // Record deletion so stale storage cannot bring the room back.
+  // Permanently mark the room as deleted locally.
   const deletedIDs = getDeletedChatIDs();
   deletedIDs.add(chatID);
   saveDeletedChatIDs(deletedIDs);
+
+  // Invalidate any pending request for this room.
+  requestTokens.delete(chatID);
+  pendingRequests.delete(chatID);
 
   chats = chats.filter(c => c.id !== chatID);
 
@@ -965,12 +1008,13 @@ deleteButton.addEventListener("click", () => {
   renderChat();
 
   closeContextMenu();
+  updateSendButton();
 
   showToast("Conversation deleted.");
 });
 
 // ==========================================
-// CROSS-TAB STORAGE SYNC
+// CROSS-TAB SYNC
 // ==========================================
 
 window.addEventListener("storage", event => {
@@ -980,13 +1024,7 @@ window.addEventListener("storage", event => {
   ) {
     chats = loadChats();
 
-    const deletedIDs = getDeletedChatIDs();
-
-    if (
-      !activeChatId ||
-      deletedIDs.has(activeChatId) ||
-      !chatExists(activeChatId)
-    ) {
+    if (!chatExists(activeChatId)) {
       activeChatId = null;
     }
 
@@ -998,7 +1036,7 @@ window.addEventListener("storage", event => {
   if (event.key === ACTIVE_CHAT_KEY) {
     const nextID = localStorage.getItem(ACTIVE_CHAT_KEY);
 
-    if (nextID && chatExists(nextID) && !isGenerating) {
+    if (nextID && chatExists(nextID)) {
       activeChatId = nextID;
       renderHistory();
       renderChat();
@@ -1063,20 +1101,12 @@ function initialize() {
   chats = loadChats();
 
   const savedActiveID = localStorage.getItem(ACTIVE_CHAT_KEY);
-
-  const savedChat = chats.find(chat => chat.id === savedActiveID);
+  const savedChat = getChatByID(savedActiveID);
 
   activeChatId = savedChat ? savedChat.id : null;
 
   renderHistory();
-
-  if (activeChatId) {
-    renderChat();
-  } else {
-    messagesContainer.innerHTML = "";
-    welcome.classList.remove("hidden");
-    chatArea.classList.add("hidden");
-  }
+  renderChat();
 
   saveActiveChat();
   resizeInput();
