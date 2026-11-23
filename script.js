@@ -1,12 +1,18 @@
 
 /* ==========================================
    YATI AI 2.0 — FRONTEND ENGINE
+   FIXED: MULTI ROOM + DELETE PERSISTENCE
 ========================================== */
 
 const API_URL = "https://yati-accounting-api.fadhilmusyaffa999.workers.dev/api/chat";
 
 const STORAGE_KEY = "yati_ai_v2_chats";
 const ACTIVE_CHAT_KEY = "yati_ai_v2_active_chat";
+const DELETED_CHATS_KEY = "yati_ai_v2_deleted_chats";
+const MEMORY_USER_KEY = "yati_ai_memory_user_id";
+
+const MAX_STORED_CHATS = 200;
+const MAX_HISTORY = 20;
 
 // ==========================================
 // DOM
@@ -49,11 +55,12 @@ const toastElement = $("#toast");
 // STATE
 // ==========================================
 
-let chats = loadChats();
-let activeChatId = localStorage.getItem(ACTIVE_CHAT_KEY);
+let chats = [];
+let activeChatId = null;
 
 let isGenerating = false;
 let contextChatId = null;
+let generatingChatId = null;
 
 let toastTimeout = null;
 
@@ -61,17 +68,98 @@ let toastTimeout = null;
 // STORAGE
 // ==========================================
 
-function loadChats() {
+function readJSON(key, fallback) {
   try {
-    const data = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    const raw = localStorage.getItem(key);
 
-    return Array.isArray(data) ? data : [];
+    if (!raw) return fallback;
+
+    return JSON.parse(raw);
   } catch {
-    return [];
+    return fallback;
   }
 }
 
+function getDeletedChatIDs() {
+  const data = readJSON(DELETED_CHATS_KEY, []);
+
+  return new Set(
+    Array.isArray(data)
+      ? data.filter(id => typeof id === "string")
+      : []
+  );
+}
+
+function saveDeletedChatIDs(ids) {
+  try {
+    localStorage.setItem(
+      DELETED_CHATS_KEY,
+      JSON.stringify([...ids])
+    );
+  } catch (error) {
+    console.error("Failed saving deleted chats:", error);
+  }
+}
+
+function normalizeChat(chat) {
+  if (!chat || typeof chat !== "object") return null;
+  if (typeof chat.id !== "string" || !chat.id) return null;
+
+  const messages = Array.isArray(chat.messages)
+    ? chat.messages
+        .filter(message =>
+          message &&
+          (message.role === "user" || message.role === "assistant") &&
+          typeof message.content === "string"
+        )
+        .map(message => ({
+          role: message.role,
+          content: message.content,
+          timestamp: Number(message.timestamp) || Date.now()
+        }))
+    : [];
+
+  return {
+    id: chat.id,
+    title:
+      typeof chat.title === "string" && chat.title.trim()
+        ? chat.title.trim()
+        : "New conversation",
+    messages,
+    createdAt: Number(chat.createdAt) || Date.now(),
+    updatedAt: Number(chat.updatedAt) || Number(chat.createdAt) || Date.now()
+  };
+}
+
+function loadChats() {
+  const stored = readJSON(STORAGE_KEY, []);
+  const deletedIDs = getDeletedChatIDs();
+
+  if (!Array.isArray(stored)) return [];
+
+  const validChats = stored
+    .map(normalizeChat)
+    .filter(Boolean)
+    .filter(chat => !deletedIDs.has(chat.id));
+
+  // Remove invalid or previously deleted chats from storage.
+  chats = validChats.slice(0, MAX_STORED_CHATS);
+
+  saveChats();
+
+  return chats;
+}
+
 function saveChats() {
+  const deletedIDs = getDeletedChatIDs();
+
+  // Prevent deleted rooms from being reintroduced.
+  chats = chats
+    .map(normalizeChat)
+    .filter(Boolean)
+    .filter(chat => !deletedIDs.has(chat.id))
+    .slice(0, MAX_STORED_CHATS);
+
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(chats));
   } catch (error) {
@@ -81,12 +169,37 @@ function saveChats() {
 }
 
 function saveActiveChat() {
-  if (activeChatId) {
+  if (activeChatId && chats.some(chat => chat.id === activeChatId)) {
     localStorage.setItem(ACTIVE_CHAT_KEY, activeChatId);
   } else {
+    activeChatId = null;
     localStorage.removeItem(ACTIVE_CHAT_KEY);
   }
 }
+
+// ==========================================
+// MEMORY USER ID
+// ==========================================
+
+function getMemoryUserID() {
+  let id = localStorage.getItem(MEMORY_USER_KEY);
+
+  if (id && /^[a-zA-Z0-9-]{10,100}$/.test(id)) {
+    return id;
+  }
+
+  try {
+    id = crypto.randomUUID();
+  } catch {
+    id = createId();
+  }
+
+  localStorage.setItem(MEMORY_USER_KEY, id);
+
+  return id;
+}
+
+const memoryUserID = getMemoryUserID();
 
 // ==========================================
 // HELPERS
@@ -95,12 +208,16 @@ function saveActiveChat() {
 function createId() {
   return (
     Date.now().toString(36) +
-    Math.random().toString(36).slice(2, 8)
+    Math.random().toString(36).slice(2, 10)
   );
 }
 
 function getActiveChat() {
   return chats.find(chat => chat.id === activeChatId) || null;
+}
+
+function chatExists(id) {
+  return chats.some(chat => chat.id === id);
 }
 
 function formatDate(timestamp) {
@@ -163,6 +280,7 @@ function createChat() {
     updatedAt: Date.now()
   };
 
+  // Always create a completely separate room.
   chats.unshift(chat);
 
   activeChatId = chat.id;
@@ -175,7 +293,6 @@ function createChat() {
 
   promptInput.value = "";
   resizeInput();
-
   promptInput.focus();
 
   closeMobileSidebar();
@@ -188,6 +305,10 @@ function startNewChat() {
     showToast("Tunggu respons selesai dulu.");
     return;
   }
+
+  // Explicitly clear the input and activate a new empty room.
+  promptInput.value = "";
+  resizeInput();
 
   createChat();
 }
@@ -243,7 +364,7 @@ function renderHistory() {
     menuButton.innerHTML = "•••";
     menuButton.title = "Chat options";
 
-    menuButton.addEventListener("click", (event) => {
+    menuButton.addEventListener("click", event => {
       event.stopPropagation();
       openContextMenu(chat.id, menuButton);
     });
@@ -260,7 +381,15 @@ function renderHistory() {
 function switchChat(id) {
   if (isGenerating) return;
 
-  activeChatId = id;
+  const target = chats.find(chat => chat.id === id);
+
+  // Never switch to an invalid/deleted room.
+  if (!target) {
+    showToast("Conversation tidak ditemukan.");
+    return;
+  }
+
+  activeChatId = target.id;
 
   saveActiveChat();
 
@@ -278,6 +407,8 @@ function switchChat(id) {
 function renderChat() {
   const chat = getActiveChat();
 
+  messagesContainer.innerHTML = "";
+
   if (!chat || !chat.messages.length) {
     welcome.classList.remove("hidden");
     chatArea.classList.add("hidden");
@@ -286,8 +417,6 @@ function renderChat() {
 
   welcome.classList.add("hidden");
   chatArea.classList.remove("hidden");
-
-  messagesContainer.innerHTML = "";
 
   chat.messages.forEach(message => {
     addMessageToDOM(message.role, message.content, false);
@@ -444,16 +573,17 @@ async function sendMessage(customText = null) {
     chat = createChat();
   }
 
+  // Capture the room ID before the request.
+  const requestChatID = chat.id;
+
   const userMessage = {
     role: "user",
     content: text,
     timestamp: Date.now()
   };
 
-  // SAVE USER MESSAGE
   chat.messages.push(userMessage);
 
-  // AUTO TITLE
   if (
     chat.title === "New conversation" &&
     chat.messages.filter(m => m.role === "user").length === 1
@@ -466,7 +596,6 @@ async function sendMessage(customText = null) {
   saveChats();
   renderHistory();
 
-  // SHOW CHAT
   welcome.classList.add("hidden");
   chatArea.classList.remove("hidden");
 
@@ -477,11 +606,14 @@ async function sendMessage(customText = null) {
 
   setGenerating(true);
 
-  const typing = showTypingIndicator();
+  generatingChatId = requestChatID;
+
+  showTypingIndicator();
 
   try {
+    // Only this room's messages are sent to Gemini.
     const conversationHistory = chat.messages
-      .slice(-20)
+      .slice(-MAX_HISTORY)
       .map(message => ({
         role: message.role === "assistant" ? "model" : "user",
         content: message.content
@@ -489,19 +621,19 @@ async function sendMessage(customText = null) {
 
     const response = await fetch(API_URL, {
       method: "POST",
-
       headers: {
         "Content-Type": "application/json"
       },
-
       body: JSON.stringify({
         message: text,
-        history: conversationHistory
+        history: conversationHistory,
+        memoryUserId: memoryUserID
       })
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      const errorText = await response.text().catch(() => "");
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
 
     const data = await response.json();
@@ -518,18 +650,29 @@ async function sendMessage(customText = null) {
 
     removeTypingIndicator();
 
+    // Don't resurrect a room if it was deleted during the request.
+    const currentChat = chats.find(c => c.id === requestChatID);
+
+    if (!currentChat) {
+      showToast("Room sudah dihapus.");
+      return;
+    }
+
     const assistantMessage = {
       role: "assistant",
       content: aiText,
       timestamp: Date.now()
     };
 
-    chat.messages.push(assistantMessage);
-    chat.updatedAt = Date.now();
+    currentChat.messages.push(assistantMessage);
+    currentChat.updatedAt = Date.now();
 
     saveChats();
 
-    addMessageToDOM("assistant", aiText);
+    // Render only if the same room is still active.
+    if (activeChatId === requestChatID) {
+      addMessageToDOM("assistant", aiText);
+    }
 
     renderHistory();
 
@@ -538,14 +681,23 @@ async function sendMessage(customText = null) {
 
     removeTypingIndicator();
 
+    const currentChat = chats.find(c => c.id === requestChatID);
+
+    if (!currentChat) return;
+
     const errorMessage =
       "Maaf, Yati belum bisa merespons saat ini. Coba periksa koneksi internet kamu dan kirim pesan lagi.";
 
-    addMessageToDOM("assistant", errorMessage);
+    // Don't save API error as permanent chat history.
+    if (activeChatId === requestChatID) {
+      addMessageToDOM("assistant", errorMessage);
+    }
 
     showToast("Connection failed.");
+
   } finally {
     setGenerating(false);
+    generatingChatId = null;
     promptInput.focus();
   }
 }
@@ -714,11 +866,11 @@ function renderSearchResults(query) {
     const title = document.createElement("strong");
     title.textContent = chat.title;
 
-    const lastMessage = chat.messages.at(-1)?.content || "Empty conversation";
+    const lastMessage =
+      chat.messages.at(-1)?.content || "Empty conversation";
 
     const description = document.createElement("small");
-    description.textContent =
-      lastMessage.slice(0, 100);
+    description.textContent = lastMessage.slice(0, 100);
 
     result.append(title, description);
 
@@ -736,6 +888,8 @@ function renderSearchResults(query) {
 // ==========================================
 
 function openContextMenu(chatId, button) {
+  if (!chatExists(chatId)) return;
+
   contextChatId = chatId;
 
   const rect = button.getBoundingClientRect();
@@ -753,10 +907,14 @@ function openContextMenu(chatId, button) {
   contextMenu.classList.remove("hidden");
 }
 
+// RENAME
 renameButton.addEventListener("click", () => {
   const chat = chats.find(c => c.id === contextChatId);
 
-  if (!chat) return;
+  if (!chat) {
+    closeContextMenu();
+    return;
+  }
 
   const newTitle = prompt("Rename conversation:", chat.title);
 
@@ -772,10 +930,15 @@ renameButton.addEventListener("click", () => {
   closeContextMenu();
 });
 
+// DELETE
 deleteButton.addEventListener("click", () => {
-  const chat = chats.find(c => c.id === contextChatId);
+  const chatID = contextChatId;
+  const chat = chats.find(c => c.id === chatID);
 
-  if (!chat) return;
+  if (!chat) {
+    closeContextMenu();
+    return;
+  }
 
   const confirmed = confirm(`Delete "${chat.title}"?`);
 
@@ -784,9 +947,14 @@ deleteButton.addEventListener("click", () => {
     return;
   }
 
-  chats = chats.filter(c => c.id !== contextChatId);
+  // Record deletion so stale storage cannot bring the room back.
+  const deletedIDs = getDeletedChatIDs();
+  deletedIDs.add(chatID);
+  saveDeletedChatIDs(deletedIDs);
 
-  if (activeChatId === contextChatId) {
+  chats = chats.filter(c => c.id !== chatID);
+
+  if (activeChatId === chatID) {
     activeChatId = chats[0]?.id || null;
   }
 
@@ -802,6 +970,43 @@ deleteButton.addEventListener("click", () => {
 });
 
 // ==========================================
+// CROSS-TAB STORAGE SYNC
+// ==========================================
+
+window.addEventListener("storage", event => {
+  if (
+    event.key === STORAGE_KEY ||
+    event.key === DELETED_CHATS_KEY
+  ) {
+    chats = loadChats();
+
+    const deletedIDs = getDeletedChatIDs();
+
+    if (
+      !activeChatId ||
+      deletedIDs.has(activeChatId) ||
+      !chatExists(activeChatId)
+    ) {
+      activeChatId = null;
+    }
+
+    renderHistory();
+    renderChat();
+    saveActiveChat();
+  }
+
+  if (event.key === ACTIVE_CHAT_KEY) {
+    const nextID = localStorage.getItem(ACTIVE_CHAT_KEY);
+
+    if (nextID && chatExists(nextID) && !isGenerating) {
+      activeChatId = nextID;
+      renderHistory();
+      renderChat();
+    }
+  }
+});
+
+// ==========================================
 // GLOBAL EVENTS
 // ==========================================
 
@@ -812,7 +1017,6 @@ document.addEventListener("click", event => {
 });
 
 document.addEventListener("keydown", event => {
-  // ESC
   if (event.key === "Escape") {
     closeSearch();
     closeContextMenu();
@@ -844,7 +1048,9 @@ document.addEventListener("keydown", event => {
 // ==========================================
 
 $("#learningBtn").addEventListener("click", () => {
-  promptInput.value = "Aku ingin belajar akuntansi. Tolong buatkan materi pembelajaran yang terstruktur dari dasar dan ajari aku secara bertahap.";
+  promptInput.value =
+    "Aku ingin belajar akuntansi. Tolong buatkan materi pembelajaran yang terstruktur dari dasar dan ajari aku secara bertahap.";
+
   resizeInput();
   promptInput.focus();
 });
@@ -856,18 +1062,18 @@ $("#learningBtn").addEventListener("click", () => {
 function initialize() {
   chats = loadChats();
 
-  // Check saved active chat
-  const savedChat = chats.find(chat => chat.id === activeChatId);
+  const savedActiveID = localStorage.getItem(ACTIVE_CHAT_KEY);
 
-  if (!savedChat) {
-    activeChatId = null;
-  }
+  const savedChat = chats.find(chat => chat.id === savedActiveID);
+
+  activeChatId = savedChat ? savedChat.id : null;
 
   renderHistory();
 
   if (activeChatId) {
     renderChat();
   } else {
+    messagesContainer.innerHTML = "";
     welcome.classList.remove("hidden");
     chatArea.classList.add("hidden");
   }
@@ -876,6 +1082,7 @@ function initialize() {
   resizeInput();
 
   console.log("Yati AI 2.0 initialized.");
+  console.log("Rooms:", chats.length);
 }
 
 initialize();
