@@ -1,15 +1,21 @@
 
-/* ==========================================
+/* =========================================================
    YATI AI 2.0 — FRONTEND ENGINE
-   MULTI-ROOM ISOLATION REBUILD
-========================================== */
+   GOOGLE AUTH + MULTI-ROOM + D1 MEMORY
+========================================================= */
 
-const API_URL = "https://yati-accounting-api.fadhilmusyaffa999.workers.dev/api/chat";
+const API_BASE = "https://yati-accounting-api.fadhilmusyaffa999.workers.dev";
+const API_URL = `${API_BASE}/api/chat`;
+
+const GOOGLE_CLIENT_ID =
+  "16934799287-u0st2gk9enbvu6amuilcbcjetdlad1gt.apps.googleusercontent.com";
 
 const STORAGE_KEY = "yati_ai_v2_chats";
 const ACTIVE_CHAT_KEY = "yati_ai_v2_active_chat";
 const DELETED_CHATS_KEY = "yati_ai_v2_deleted_chats";
-const MEMORY_USER_KEY = "yati_ai_memory_user_id";
+
+const AUTH_TOKEN_KEY = "yati_ai_google_session";
+const AUTH_USER_KEY = "yati_ai_google_user";
 
 const MAX_STORED_CHATS = 200;
 const MAX_HISTORY = 20;
@@ -61,9 +67,517 @@ let activeChatId = null;
 let contextChatId = null;
 let toastTimeout = null;
 
-// Request tracking: room-specific, not global.
+let authenticated = false;
+let currentUser = null;
+let authLoading = true;
+
 const pendingRequests = new Map();
 const requestTokens = new Map();
+
+// ==========================================
+// AUTH STORAGE
+// ==========================================
+
+function getAuthToken() {
+  return localStorage.getItem(AUTH_TOKEN_KEY) || "";
+}
+
+function getStoredUser() {
+  try {
+    return JSON.parse(localStorage.getItem(AUTH_USER_KEY) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function saveAuth(token, user) {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+
+  currentUser = user;
+  authenticated = true;
+
+  renderAccountUI();
+  hideLoginOverlay();
+}
+
+function clearAuth() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
+
+  currentUser = null;
+  authenticated = false;
+
+  renderAccountUI();
+  showLoginOverlay();
+}
+
+function authHeaders() {
+  const token = getAuthToken();
+
+  return {
+    "Content-Type": "application/json",
+    ...(token
+      ? { "Authorization": `Bearer ${token}` }
+      : {})
+  };
+}
+
+// ==========================================
+// AUTH UI
+// ==========================================
+
+function injectAuthUI() {
+  if ($("#yatiAccountBar")) return;
+
+  const style = document.createElement("style");
+
+  style.textContent = `
+    #yatiAccountBar {
+      position: fixed;
+      top: 14px;
+      right: 16px;
+      z-index: 5000;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-family: inherit;
+    }
+
+    #yatiAccountButton {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(32,32,35,.92);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,.1);
+      padding: 7px 12px;
+      border-radius: 100px;
+      cursor: pointer;
+      backdrop-filter: blur(16px);
+      font-size: 12px;
+    }
+
+    #yatiAccountButton img {
+      width: 25px;
+      height: 25px;
+      border-radius: 50%;
+      object-fit: cover;
+    }
+
+    #yatiAccountButton .yati-account-avatar {
+      width: 25px;
+      height: 25px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: #444;
+    }
+
+    #yatiLoginOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 10000;
+      background: rgba(8,8,10,.76);
+      backdrop-filter: blur(22px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    #yatiLoginOverlay.hidden {
+      display: none;
+    }
+
+    .yati-login-card {
+      width: min(420px, 100%);
+      background: #1c1c1f;
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 24px;
+      padding: 32px 24px;
+      color: #fff;
+      text-align: center;
+      box-shadow: 0 24px 80px rgba(0,0,0,.4);
+    }
+
+    .yati-login-logo {
+      width: 58px;
+      height: 58px;
+      border-radius: 18px;
+      margin: 0 auto 20px;
+      display: grid;
+      place-items: center;
+      background: #303034;
+      font-size: 26px;
+    }
+
+    .yati-login-card h2 {
+      margin: 0 0 9px;
+      font-size: 22px;
+    }
+
+    .yati-login-card p {
+      color: #aaa;
+      font-size: 13px;
+      line-height: 1.65;
+      margin: 0 0 24px;
+    }
+
+    #yatiGoogleButton {
+      display: flex;
+      justify-content: center;
+      min-height: 44px;
+    }
+
+    #yatiLoginStatus {
+      font-size: 12px;
+      color: #aaa;
+      margin-top: 15px;
+      min-height: 18px;
+    }
+
+    #yatiLogoutMenu {
+      position: fixed;
+      top: 62px;
+      right: 16px;
+      z-index: 5001;
+      background: #222225;
+      color: white;
+      border: 1px solid rgba(255,255,255,.1);
+      padding: 8px;
+      border-radius: 12px;
+      min-width: 180px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.4);
+    }
+
+    #yatiLogoutMenu.hidden {
+      display: none;
+    }
+
+    #yatiLogoutMenu button {
+      width: 100%;
+      background: transparent;
+      border: 0;
+      color: white;
+      padding: 10px;
+      border-radius: 8px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    #yatiLogoutMenu button:hover {
+      background: rgba(255,255,255,.08);
+    }
+
+    @media(max-width:760px) {
+      #yatiAccountBar {
+        top: 10px;
+        right: 10px;
+      }
+
+      #yatiAccountButton {
+        padding: 5px 9px;
+      }
+    }
+  `;
+
+  document.head.appendChild(style);
+
+  const accountBar = document.createElement("div");
+  accountBar.id = "yatiAccountBar";
+
+  const accountButton = document.createElement("button");
+  accountButton.id = "yatiAccountButton";
+  accountButton.type = "button";
+
+  accountBar.appendChild(accountButton);
+  document.body.appendChild(accountBar);
+
+  const logoutMenu = document.createElement("div");
+  logoutMenu.id = "yatiLogoutMenu";
+  logoutMenu.className = "hidden";
+  logoutMenu.innerHTML = `
+    <button id="yatiLogoutButton" type="button">
+      Log out
+    </button>
+  `;
+
+  document.body.appendChild(logoutMenu);
+
+  const overlay = document.createElement("div");
+  overlay.id = "yatiLoginOverlay";
+
+  overlay.innerHTML = `
+    <div class="yati-login-card">
+      <div class="yati-login-logo">✦</div>
+      <h2>Welcome to Yati AI</h2>
+      <p>
+        Login dengan Google untuk menggunakan Yati AI
+        dan menyimpan memory pribadi pada akun kamu.
+      </p>
+      <div id="yatiGoogleButton"></div>
+      <div id="yatiLoginStatus">Memuat Google Login...</div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  accountButton.addEventListener("click", () => {
+    logoutMenu.classList.toggle("hidden");
+  });
+
+  logoutMenu.addEventListener("click", event => {
+    if (event.target.closest("#yatiLogoutButton")) {
+      logout();
+    }
+  });
+
+  document.addEventListener("click", event => {
+    if (
+      !accountBar.contains(event.target) &&
+      !logoutMenu.contains(event.target)
+    ) {
+      logoutMenu.classList.add("hidden");
+    }
+  });
+}
+
+function renderAccountUI() {
+  const button = $("#yatiAccountButton");
+  if (!button) return;
+
+  if (authenticated && currentUser) {
+    const picture = currentUser.picture
+      ? `<img src="${escapeHTML(currentUser.picture)}" alt="">`
+      : `<span class="yati-account-avatar">👤</span>`;
+
+    button.innerHTML = `
+      ${picture}
+      <span>${escapeHTML(currentUser.name || currentUser.email || "Account")}</span>
+      <span>⌄</span>
+    `;
+  } else {
+    button.innerHTML = `
+      <span class="yati-account-avatar">👤</span>
+      <span>Login</span>
+    `;
+  }
+}
+
+function showLoginOverlay() {
+  $("#yatiLoginOverlay")?.classList.remove("hidden");
+}
+
+function hideLoginOverlay() {
+  $("#yatiLoginOverlay")?.classList.add("hidden");
+  $("#yatiLogoutMenu")?.classList.add("hidden");
+}
+
+function setLoginStatus(text) {
+  const element = $("#yatiLoginStatus");
+  if (element) element.textContent = text;
+}
+
+// ==========================================
+// GOOGLE LOGIN
+// ==========================================
+
+function loadGoogleScript() {
+  return new Promise((resolve, reject) => {
+    if (window.google?.accounts?.id) {
+      resolve();
+      return;
+    }
+
+    const existing = document.querySelector(
+      'script[src="https://accounts.google.com/gsi/client"]'
+    );
+
+    if (existing) {
+      existing.addEventListener("load", resolve, { once: true });
+      existing.addEventListener("error", reject, { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+
+    script.onload = resolve;
+    script.onerror = reject;
+
+    document.head.appendChild(script);
+  });
+}
+
+async function initializeGoogleLogin() {
+  try {
+    await loadGoogleScript();
+
+    if (!window.google?.accounts?.id) {
+      throw new Error("Google Identity Services tidak tersedia.");
+    }
+
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleGoogleCredential,
+      auto_select: false,
+      cancel_on_tap_outside: true
+    });
+
+    google.accounts.id.renderButton(
+      $("#yatiGoogleButton"),
+      {
+        theme: "filled_black",
+        size: "large",
+        shape: "pill",
+        text: "signin_with",
+        width: 280
+      }
+    );
+
+    setLoginStatus("Silakan login dengan akun Google.");
+  } catch (error) {
+    console.error("Google initialization error:", error);
+    setLoginStatus("Google Login gagal dimuat. Refresh halaman.");
+  }
+}
+
+async function handleGoogleCredential(response) {
+  try {
+    setLoginStatus("Memverifikasi akun Google...");
+
+    const result = await fetch(`${API_BASE}/api/auth/google`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        credential: response.credential
+      })
+    });
+
+    const data = await result.json();
+
+    if (!result.ok || !data.success || !data.token) {
+      throw new Error(data.error || "Login gagal.");
+    }
+
+    saveAuth(data.token, data.user);
+
+    showToast("Login berhasil.");
+
+    renderHistory();
+    renderChat();
+
+  } catch (error) {
+    console.error("Google login error:", error);
+    setLoginStatus(error.message || "Login gagal. Coba lagi.");
+  }
+}
+
+// ==========================================
+// SESSION CHECK
+// ==========================================
+
+async function checkSession() {
+  const token = getAuthToken();
+
+  if (!token) {
+    authenticated = false;
+    currentUser = null;
+    return false;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/api/auth/me`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      clearAuth();
+      return false;
+    }
+
+    const data = await response.json();
+
+    if (!data.authenticated || !data.user) {
+      clearAuth();
+      return false;
+    }
+
+    authenticated = true;
+    currentUser = data.user;
+
+    localStorage.setItem(
+      AUTH_USER_KEY,
+      JSON.stringify(data.user)
+    );
+
+    renderAccountUI();
+    hideLoginOverlay();
+
+    return true;
+
+  } catch (error) {
+    console.error("Session check error:", error);
+
+    // Keep the token if the network is temporarily unavailable.
+    currentUser = getStoredUser();
+    authenticated = Boolean(currentUser && token);
+
+    renderAccountUI();
+
+    if (authenticated) {
+      hideLoginOverlay();
+      showToast("Mode offline: koneksi auth tidak tersedia.");
+      return true;
+    }
+
+    return false;
+  }
+}
+
+async function logout() {
+  const token = getAuthToken();
+
+  try {
+    if (token) {
+      await fetch(`${API_BASE}/api/auth/logout`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+    }
+  } catch (error) {
+    console.warn("Logout request failed:", error);
+  }
+
+  clearAuth();
+  showToast("Berhasil logout.");
+}
+
+async function initializeAuth() {
+  injectAuthUI();
+
+  currentUser = getStoredUser();
+
+  const validSession = await checkSession();
+
+  if (!validSession) {
+    showLoginOverlay();
+    await initializeGoogleLogin();
+  }
+
+  authLoading = false;
+}
 
 // ==========================================
 // STORAGE
@@ -80,6 +594,7 @@ function readJSON(key, fallback) {
 
 function getDeletedChatIDs() {
   const data = readJSON(DELETED_CHATS_KEY, []);
+
   return new Set(
     Array.isArray(data)
       ? data.filter(id => typeof id === "string")
@@ -89,7 +604,10 @@ function getDeletedChatIDs() {
 
 function saveDeletedChatIDs(ids) {
   try {
-    localStorage.setItem(DELETED_CHATS_KEY, JSON.stringify([...ids]));
+    localStorage.setItem(
+      DELETED_CHATS_KEY,
+      JSON.stringify([...ids])
+    );
   } catch (error) {
     console.error("Failed saving deleted chats:", error);
   }
@@ -169,29 +687,6 @@ function saveActiveChat() {
     localStorage.removeItem(ACTIVE_CHAT_KEY);
   }
 }
-
-// ==========================================
-// MEMORY USER ID
-// ==========================================
-
-function getMemoryUserID() {
-  let id = localStorage.getItem(MEMORY_USER_KEY);
-
-  if (id && /^[a-zA-Z0-9-]{10,100}$/.test(id)) {
-    return id;
-  }
-
-  try {
-    id = crypto.randomUUID();
-  } catch {
-    id = createId();
-  }
-
-  localStorage.setItem(MEMORY_USER_KEY, id);
-  return id;
-}
-
-const memoryUserID = getMemoryUserID();
 
 // ==========================================
 // HELPERS
@@ -306,7 +801,6 @@ function createChat() {
 function startNewChat() {
   promptInput.value = "";
   resizeInput();
-
   createChat();
 }
 
@@ -378,7 +872,6 @@ function switchChat(id) {
     return;
   }
 
-  // Switch room immediately, even if another room is generating.
   activeChatId = target.id;
 
   saveActiveChat();
@@ -397,7 +890,6 @@ function switchChat(id) {
 // ==========================================
 
 function renderChatFor(roomID) {
-  // Never render a room that isn't currently active.
   if (roomID !== activeChatId) return;
 
   const chat = getChatByID(roomID);
@@ -534,7 +1026,7 @@ function scrollToBottom(smooth = true) {
 }
 
 // ==========================================
-// ROOM-SPECIFIC TYPING INDICATOR
+// TYPING INDICATOR
 // ==========================================
 
 function showTypingIndicator(roomID) {
@@ -564,15 +1056,20 @@ function showTypingIndicator(roomID) {
 
 function removeTypingIndicator(roomID = null) {
   if (roomID && roomID !== activeChatId) return;
-
   $("#typingIndicator")?.remove();
 }
 
 // ==========================================
-// SEND MESSAGE — ROOM ISOLATED
+// SEND MESSAGE
 // ==========================================
 
 async function sendMessage(customText = null) {
+  if (!authenticated || !getAuthToken()) {
+    showLoginOverlay();
+    showToast("Login terlebih dahulu.");
+    return;
+  }
+
   const text = (
     customText !== null
       ? customText
@@ -589,13 +1086,11 @@ async function sendMessage(customText = null) {
 
   const roomID = chat.id;
 
-  // Prevent duplicate requests in the same room only.
   if (isRoomGenerating(roomID)) {
     showToast("Respons room ini sedang diproses.");
     return;
   }
 
-  // Create immutable request history.
   const userMessage = {
     role: "user",
     content: text,
@@ -616,7 +1111,6 @@ async function sendMessage(customText = null) {
   saveChats();
   renderHistory();
 
-  // Only update visible DOM for the room that owns this message.
   if (activeChatId === roomID) {
     welcome.classList.add("hidden");
     chatArea.classList.remove("hidden");
@@ -626,7 +1120,6 @@ async function sendMessage(customText = null) {
   promptInput.value = "";
   resizeInput();
 
-  // Room-specific request token.
   const token = createId();
 
   requestTokens.set(roomID, token);
@@ -638,8 +1131,11 @@ async function sendMessage(customText = null) {
     showTypingIndicator(roomID);
   }
 
-  // Snapshot history. This array will not change during the request.
+  // IMPORTANT:
+  // History excludes the latest user message.
+  // Worker adds the latest message separately.
   const historySnapshot = chat.messages
+    .slice(0, -1)
     .slice(-MAX_HISTORY)
     .map(message => ({
       role: message.role === "assistant" ? "model" : "user",
@@ -649,15 +1145,18 @@ async function sendMessage(customText = null) {
   try {
     const response = await fetch(API_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: authHeaders(),
       body: JSON.stringify({
         message: text,
-        history: historySnapshot,
-        memoryUserId: memoryUserID
+        history: historySnapshot
       })
     });
+
+    if (response.status === 401) {
+      clearAuth();
+      showToast("Session berakhir. Login ulang.");
+      return;
+    }
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
@@ -676,12 +1175,10 @@ async function sendMessage(customText = null) {
       throw new Error("Empty AI response");
     }
 
-    // Reject stale requests.
     if (requestTokens.get(roomID) !== token) {
       return;
     }
 
-    // Locate original room by ID. Never use currently active room.
     const originalRoom = getChatByID(roomID);
 
     if (!originalRoom) {
@@ -699,7 +1196,6 @@ async function sendMessage(customText = null) {
 
     saveChats();
 
-    // Only render if the original room is still open.
     if (activeChatId === roomID) {
       removeTypingIndicator(roomID);
       addMessageToDOM("assistant", aiText);
@@ -728,7 +1224,6 @@ async function sendMessage(customText = null) {
     showToast("Connection failed.");
 
   } finally {
-    // Only clear this room's request state.
     if (requestTokens.get(roomID) === token) {
       requestTokens.delete(roomID);
       pendingRequests.delete(roomID);
@@ -743,7 +1238,7 @@ async function sendMessage(customText = null) {
 }
 
 // ==========================================
-// SEND BUTTON STATE
+// SEND BUTTON
 // ==========================================
 
 function updateSendButton() {
@@ -986,12 +1481,10 @@ deleteButton.addEventListener("click", () => {
     return;
   }
 
-  // Permanently mark the room as deleted locally.
   const deletedIDs = getDeletedChatIDs();
   deletedIDs.add(chatID);
   saveDeletedChatIDs(deletedIDs);
 
-  // Invalidate any pending request for this room.
   requestTokens.delete(chatID);
   pendingRequests.delete(chatID);
 
@@ -1049,7 +1542,7 @@ window.addEventListener("storage", event => {
 // ==========================================
 
 document.addEventListener("click", event => {
-  if (!contextMenu.contains(event.target)) {
+  if (contextMenu && !contextMenu.contains(event.target)) {
     closeContextMenu();
   }
 });
@@ -1059,9 +1552,9 @@ document.addEventListener("keydown", event => {
     closeSearch();
     closeContextMenu();
     closeMobileSidebar();
+    $("#yatiLogoutMenu")?.classList.add("hidden");
   }
 
-  // CTRL/CMD + K
   if (
     (event.ctrlKey || event.metaKey) &&
     event.key.toLowerCase() === "k"
@@ -1070,7 +1563,6 @@ document.addEventListener("keydown", event => {
     openSearch();
   }
 
-  // CTRL/CMD + SHIFT + O -> New chat
   if (
     (event.ctrlKey || event.metaKey) &&
     event.shiftKey &&
@@ -1085,7 +1577,7 @@ document.addEventListener("keydown", event => {
 // LEARNING BUTTON
 // ==========================================
 
-$("#learningBtn").addEventListener("click", () => {
+$("#learningBtn")?.addEventListener("click", () => {
   promptInput.value =
     "Aku ingin belajar akuntansi. Tolong buatkan materi pembelajaran yang terstruktur dari dasar dan ajari aku secara bertahap.";
 
@@ -1097,7 +1589,7 @@ $("#learningBtn").addEventListener("click", () => {
 // INITIALIZATION
 // ==========================================
 
-function initialize() {
+async function initialize() {
   chats = loadChats();
 
   const savedActiveID = localStorage.getItem(ACTIVE_CHAT_KEY);
@@ -1111,8 +1603,11 @@ function initialize() {
   saveActiveChat();
   resizeInput();
 
+  await initializeAuth();
+
   console.log("Yati AI 2.0 initialized.");
   console.log("Rooms:", chats.length);
+  console.log("Authenticated:", authenticated);
 }
 
 initialize();
