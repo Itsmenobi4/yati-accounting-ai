@@ -1,8 +1,3 @@
-
-/* ==========================================
-   YATI 2.0 — APPLE × CHATGPT
-========================================== */
-
 :root {
   --background: #111111;
   --sidebar: #181818;
@@ -1634,4 +1629,62 @@ svg {
     display: none;
   }
 
+/* ==========================================
+   YATI AI — IMAGE UPLOAD BUTTON
+========================================== */
+
+.upload-image-button {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 0;
+
+  border-radius: 11px;
+
+  background: rgba(255,255,255,.035);
+  border: 1px solid rgba(255,255,255,.055);
+
+  color: #aaaab0;
+
+  transition:
+    background .2s,
+    border-color .2s,
+    color .2s,
+    transform .2s;
+}
+
+.upload-image-button:hover {
+  background: rgba(255,255,255,.075);
+  border-color: rgba(255,255,255,.12);
+  color: #d8d0ff;
+  transform: translateY(-1px);
+}
+
+.upload-image-button:active {
+  transform: scale(.96);
+}
+
+.upload-image-button svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.upload-image-button:focus-visible {
+  outline: 2px solid rgba(183,161,255,.65);
+  outline-offset: 3px;
+}
+
+@media (max-width: 760px) {
+  .upload-image-button {
+    width: 35px;
+    height: 35px;
+    min-width: 35px;
+    border-radius: 10px;
+  }
 }
