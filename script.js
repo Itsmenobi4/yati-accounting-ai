@@ -1,7 +1,7 @@
 
 /* =========================================================
    YATI AI 2.0 — FRONTEND ENGINE
-   GOOGLE AUTH + MULTI-ROOM + D1 MEMORY
+   GOOGLE AUTH + MULTI-ROOM + D1 MEMORY + IMAGE UPLOAD
 ========================================================= */
 
 const API_BASE = "https://yati-accounting-api.fadhilmusyaffa999.workers.dev";
@@ -19,6 +19,13 @@ const AUTH_USER_KEY = "yati_ai_google_user";
 
 const MAX_STORED_CHATS = 200;
 const MAX_HISTORY = 20;
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
+
+const ALLOWED_IMAGE_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp"
+];
 
 // ==========================================
 // DOM
@@ -57,6 +64,10 @@ const deleteButton = $("#deleteChat");
 
 const toastElement = $("#toast");
 
+// Image Upload DOM
+const uploadImageButton = $("#uploadImageBtn");
+const imageUploadInput = $("#imageUploadInput");
+
 // ==========================================
 // STATE
 // ==========================================
@@ -73,6 +84,9 @@ let authLoading = true;
 
 const pendingRequests = new Map();
 const requestTokens = new Map();
+
+// Selected image (testing stage)
+let selectedImage = null;
 
 // ==========================================
 // AUTH STORAGE
@@ -528,7 +542,6 @@ async function checkSession() {
   } catch (error) {
     console.error("Session check error:", error);
 
-    // Keep the token if the network is temporarily unavailable.
     currentUser = getStoredUser();
     authenticated = Boolean(currentUser && token);
 
@@ -961,7 +974,7 @@ function addMessageToDOM(role, content, shouldScroll = true) {
       "Copy response",
       `<svg viewBox="0 0 24 24">
         <rect x="8" y="8" width="12" height="12" rx="2"/>
-        <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>
+        <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 a2 2 0 0 0-2 2v9a2 2 0 0 a0 2 2 0 0 0 2 2h3"/>
       </svg>`
     );
 
@@ -1131,9 +1144,6 @@ async function sendMessage(customText = null) {
     showTypingIndicator(roomID);
   }
 
-  // IMPORTANT:
-  // History excludes the latest user message.
-  // Worker adds the latest message separately.
   const historySnapshot = chat.messages
     .slice(0, -1)
     .slice(-MAX_HISTORY)
@@ -1586,6 +1596,53 @@ $("#learningBtn")?.addEventListener("click", () => {
 });
 
 // ==========================================
+// IMAGE UPLOAD
+// ==========================================
+
+function initializeImageUpload() {
+  if (!uploadImageButton || !imageUploadInput) {
+    console.warn("[Yati Upload] Tombol/input upload belum ditemukan.");
+    return;
+  }
+
+  uploadImageButton.addEventListener("click", () => {
+    imageUploadInput.click();
+  });
+
+  imageUploadInput.addEventListener("change", event => {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+      showToast("Format gambar tidak didukung.");
+      imageUploadInput.value = "";
+      return;
+    }
+
+    if (file.size > MAX_IMAGE_SIZE) {
+      showToast("Ukuran gambar maksimal 10 MB.");
+      imageUploadInput.value = "";
+      return;
+    }
+
+    selectedImage = file;
+
+    console.log("[Yati Upload] Gambar terpilih:", {
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      sizeMB: (file.size / (1024 * 1024)).toFixed(2) + " MB"
+    });
+
+    showToast(`Gambar dipilih: ${file.name}`);
+
+    // Reset supaya file yang sama bisa dipilih ulang.
+    imageUploadInput.value = "";
+  });
+}
+
+// ==========================================
 // INITIALIZATION
 // ==========================================
 
@@ -1603,11 +1660,14 @@ async function initialize() {
   saveActiveChat();
   resizeInput();
 
+  initializeImageUpload();
+
   await initializeAuth();
 
   console.log("Yati AI 2.0 initialized.");
   console.log("Rooms:", chats.length);
   console.log("Authenticated:", authenticated);
+  console.log("Image upload:", Boolean(uploadImageButton && imageUploadInput));
 }
 
 initialize();
