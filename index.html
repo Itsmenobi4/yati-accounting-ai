@@ -116,9 +116,7 @@
 
         <div class="topbar-brand">
           <span class="topbar-name">Yati</span>
-
           <span class="topbar-divider">/</span>
-
           <span class="topbar-subtitle">Accounting Intelligence</span>
         </div>
 
@@ -177,7 +175,7 @@
             <button class="quick-prompt" data-prompt="Jelaskan debit dan kredit dengan cara paling mudah dipahami, lengkap dengan contoh transaksi sehari-hari.">
               <span class="prompt-icon blue">⇄</span>
               <span>
-                <strong>Debit & kredit</strong>
+                <strong>Debit &amp; kredit</strong>
                 <small>Pahami cara kerjanya</small>
               </span>
               <span class="prompt-arrow">↗</span>
@@ -236,10 +234,43 @@
 
           <div class="composer-left">
 
+            <!-- ACCOUNTING TUTOR -->
             <button class="composer-tool" id="learningBtn" title="Accounting tutor">
               <span class="tool-sparkle">✳</span>
               <span>Tutor</span>
             </button>
+
+            <!-- IMAGE UPLOAD BUTTON -->
+            <button
+              class="composer-tool upload-image-button"
+              id="uploadImageBtn"
+              type="button"
+              title="Upload image"
+              aria-label="Upload image"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="18"
+                height="18"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="5"></rect>
+                <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                <path d="M21 15l-5-5L5 21"></path>
+              </svg>
+            </button>
+
+            <!-- HIDDEN FILE INPUT -->
+            <input
+              type="file"
+              id="imageUploadInput"
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+            >
 
             <span class="composer-context">
               Accounting mode
