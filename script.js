@@ -1,7 +1,7 @@
 
 /* =========================================================
    YATI AI 2.0 — FRONTEND ENGINE
-   GOOGLE AUTH + MULTI-ROOM + D1 MEMORY + IMAGE UPLOAD
+   GOOGLE AUTH + MULTI-ROOM + D1 MEMORY + IMAGE VISION
 ========================================================= */
 
 const API_BASE = "https://yati-accounting-api.fadhilmusyaffa999.workers.dev";
@@ -19,7 +19,7 @@ const AUTH_USER_KEY = "yati_ai_google_user";
 
 const MAX_STORED_CHATS = 200;
 const MAX_HISTORY = 20;
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
+const MAX_IMAGE_SIZE = 8 * 1024 * 1024;
 
 const ALLOWED_IMAGE_TYPES = [
   "image/png",
@@ -64,7 +64,6 @@ const deleteButton = $("#deleteChat");
 
 const toastElement = $("#toast");
 
-// Image Upload DOM
 const uploadImageButton = $("#uploadImageBtn");
 const imageUploadInput = $("#imageUploadInput");
 
@@ -85,8 +84,208 @@ let authLoading = true;
 const pendingRequests = new Map();
 const requestTokens = new Map();
 
-// Selected image (testing stage)
 let selectedImage = null;
+let selectedImagePreviewURL = null;
+
+// ==========================================
+// IMAGE HELPERS
+// ==========================================
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const result = reader.result;
+
+      if (typeof result !== "string") {
+        reject(new Error("Gambar gagal dibaca."));
+        return;
+      }
+
+      const commaIndex = result.indexOf(",");
+
+      if (commaIndex === -1) {
+        reject(new Error("Format gambar tidak valid."));
+        return;
+      }
+
+      resolve(result.slice(commaIndex + 1));
+    };
+
+    reader.onerror = () => {
+      reject(new Error("Gagal membaca file gambar."));
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
+function clearSelectedImage() {
+  selectedImage = null;
+
+  if (selectedImagePreviewURL) {
+    URL.revokeObjectURL(selectedImagePreviewURL);
+    selectedImagePreviewURL = null;
+  }
+
+  removeImagePreview();
+
+  if (imageUploadInput) {
+    imageUploadInput.value = "";
+  }
+
+  updateSendButton();
+}
+
+function createImagePreview() {
+  if (!selectedImage || !promptInput) return;
+
+  removeImagePreview();
+
+  const parent = promptInput.parentElement;
+  if (!parent) return;
+
+  const preview = document.createElement("div");
+  preview.id = "yatiImagePreview";
+
+  preview.innerHTML = `
+    <div class="yati-image-preview-inner">
+      <img id="yatiPreviewImage" alt="Selected image preview">
+      <div class="yati-preview-info">
+        <span class="yati-preview-name"></span>
+        <span class="yati-preview-size"></span>
+      </div>
+      <button type="button" id="yatiRemoveImage" aria-label="Remove image">×</button>
+    </div>
+  `;
+
+  const style = document.createElement("style");
+
+  if (!$("#yatiImagePreviewStyles")) {
+    style.id = "yatiImagePreviewStyles";
+    style.textContent = `
+      #yatiImagePreview {
+        padding: 10px 12px 0;
+      }
+
+      .yati-image-preview-inner {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        position: relative;
+        max-width: 260px;
+        background: rgba(255,255,255,.06);
+        border: 1px solid rgba(255,255,255,.10);
+        padding: 8px;
+        border-radius: 14px;
+      }
+
+      #yatiPreviewImage {
+        width: 64px;
+        height: 64px;
+        border-radius: 9px;
+        object-fit: cover;
+        display: block;
+      }
+
+      .yati-preview-info {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        max-width: 140px;
+      }
+
+      .yati-preview-name {
+        font-size: 12px;
+        color: var(--text, #eee);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .yati-preview-size {
+        font-size: 11px;
+        color: var(--secondary, #999);
+      }
+
+      #yatiRemoveImage {
+        position: absolute;
+        top: -7px;
+        right: -7px;
+        width: 23px;
+        height: 23px;
+        border: 0;
+        border-radius: 50%;
+        background: #38383b;
+        color: white;
+        cursor: pointer;
+        font-size: 17px;
+        display: grid;
+        place-items: center;
+      }
+
+      .yati-message-image {
+        display: block;
+        max-width: min(340px, 100%);
+        max-height: 340px;
+        object-fit: contain;
+        border-radius: 14px;
+        margin-bottom: 9px;
+        border: 1px solid rgba(255,255,255,.10);
+      }
+
+      .yati-image-only-label {
+        color: #aaa;
+        font-size: 13px;
+        margin-top: 6px;
+      }
+
+      @media(max-width: 600px) {
+        #yatiImagePreview {
+          padding-left: 8px;
+          padding-right: 8px;
+        }
+
+        .yati-image-preview-inner {
+          max-width: 220px;
+        }
+
+        #yatiPreviewImage {
+          width: 54px;
+          height: 54px;
+        }
+
+        .yati-message-image {
+          max-width: 100%;
+          max-height: 260px;
+        }
+      }
+    `;
+
+    document.head.appendChild(style);
+
+    parent.insertBefore(preview, promptInput);
+
+    const image = preview.querySelector("#yatiPreviewImage");
+    image.src = selectedImagePreviewURL;
+
+    preview.querySelector(".yati-preview-name").textContent =
+      selectedImage.name;
+
+    preview.querySelector(".yati-preview-size").textContent =
+      `${(selectedImage.size / (1024 * 1024)).toFixed(2)} MB`;
+
+    preview.querySelector("#yatiRemoveImage").addEventListener(
+      "click",
+      clearSelectedImage
+    );
+  }
+
+  function removeImagePreview() {
+    $("#yatiImagePreview")?.remove();
+  }
+}
 
 // ==========================================
 // AUTH STORAGE
@@ -131,9 +330,7 @@ function authHeaders() {
 
   return {
     "Content-Type": "application/json",
-    ...(token
-      ? { "Authorization": `Bearer ${token}` }
-      : {})
+    ...(token ? { "Authorization": `Bearer ${token}` } : {})
   };
 }
 
@@ -312,9 +509,7 @@ function injectAuthUI() {
   logoutMenu.id = "yatiLogoutMenu";
   logoutMenu.className = "hidden";
   logoutMenu.innerHTML = `
-    <button id="yatiLogoutButton" type="button">
-      Log out
-    </button>
+    <button id="yatiLogoutButton" type="button">Log out</button>
   `;
 
   document.body.appendChild(logoutMenu);
@@ -326,10 +521,7 @@ function injectAuthUI() {
     <div class="yati-login-card">
       <div class="yati-login-logo">✦</div>
       <h2>Welcome to Yati AI</h2>
-      <p>
-        Login dengan Google untuk menggunakan Yati AI
-        dan menyimpan memory pribadi pada akun kamu.
-      </p>
+      <p>Login dengan Google untuk menggunakan Yati AI dan menyimpan memory pribadi pada akun kamu.</p>
       <div id="yatiGoogleButton"></div>
       <div id="yatiLoginStatus">Memuat Google Login...</div>
     </div>
@@ -342,16 +534,11 @@ function injectAuthUI() {
   });
 
   logoutMenu.addEventListener("click", event => {
-    if (event.target.closest("#yatiLogoutButton")) {
-      logout();
-    }
+    if (event.target.closest("#yatiLogoutButton")) logout();
   });
 
   document.addEventListener("click", event => {
-    if (
-      !accountBar.contains(event.target) &&
-      !logoutMenu.contains(event.target)
-    ) {
+    if (!accountBar.contains(event.target) && !logoutMenu.contains(event.target)) {
       logoutMenu.classList.add("hidden");
     }
   });
@@ -415,11 +602,9 @@ function loadGoogleScript() {
     }
 
     const script = document.createElement("script");
-
     script.src = "https://accounts.google.com/gsi/client";
     script.async = true;
     script.defer = true;
-
     script.onload = resolve;
     script.onerror = reject;
 
@@ -442,16 +627,13 @@ async function initializeGoogleLogin() {
       cancel_on_tap_outside: true
     });
 
-    google.accounts.id.renderButton(
-      $("#yatiGoogleButton"),
-      {
-        theme: "filled_black",
-        size: "large",
-        shape: "pill",
-        text: "signin_with",
-        width: 280
-      }
-    );
+    google.accounts.id.renderButton($("#yatiGoogleButton"), {
+      theme: "filled_black",
+      size: "large",
+      shape: "pill",
+      text: "signin_with",
+      width: 280
+    });
 
     setLoginStatus("Silakan login dengan akun Google.");
   } catch (error) {
@@ -466,12 +648,8 @@ async function handleGoogleCredential(response) {
 
     const result = await fetch(`${API_BASE}/api/auth/google`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        credential: response.credential
-      })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ credential: response.credential })
     });
 
     const data = await result.json();
@@ -481,12 +659,10 @@ async function handleGoogleCredential(response) {
     }
 
     saveAuth(data.token, data.user);
-
     showToast("Login berhasil.");
 
     renderHistory();
     renderChat();
-
   } catch (error) {
     console.error("Google login error:", error);
     setLoginStatus(error.message || "Login gagal. Coba lagi.");
@@ -509,9 +685,7 @@ async function checkSession() {
   try {
     const response = await fetch(`${API_BASE}/api/auth/me`, {
       method: "GET",
-      headers: {
-        "Authorization": `Bearer ${token}`
-      }
+      headers: { Authorization: `Bearer ${token}` }
     });
 
     if (!response.ok) {
@@ -529,16 +703,12 @@ async function checkSession() {
     authenticated = true;
     currentUser = data.user;
 
-    localStorage.setItem(
-      AUTH_USER_KEY,
-      JSON.stringify(data.user)
-    );
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(data.user));
 
     renderAccountUI();
     hideLoginOverlay();
 
     return true;
-
   } catch (error) {
     console.error("Session check error:", error);
 
@@ -564,9 +734,7 @@ async function logout() {
     if (token) {
       await fetch(`${API_BASE}/api/auth/logout`, {
         method: "POST",
-        headers: {
-          "Authorization": `Bearer ${token}`
-        }
+        headers: { Authorization: `Bearer ${token}` }
       });
     }
   } catch (error) {
@@ -579,7 +747,6 @@ async function logout() {
 
 async function initializeAuth() {
   injectAuthUI();
-
   currentUser = getStoredUser();
 
   const validSession = await checkSession();
@@ -607,20 +774,12 @@ function readJSON(key, fallback) {
 
 function getDeletedChatIDs() {
   const data = readJSON(DELETED_CHATS_KEY, []);
-
-  return new Set(
-    Array.isArray(data)
-      ? data.filter(id => typeof id === "string")
-      : []
-  );
+  return new Set(Array.isArray(data) ? data.filter(id => typeof id === "string") : []);
 }
 
 function saveDeletedChatIDs(ids) {
   try {
-    localStorage.setItem(
-      DELETED_CHATS_KEY,
-      JSON.stringify([...ids])
-    );
+    localStorage.setItem(DELETED_CHATS_KEY, JSON.stringify([...ids]));
   } catch (error) {
     console.error("Failed saving deleted chats:", error);
   }
@@ -646,16 +805,12 @@ function normalizeChat(chat) {
 
   return {
     id: chat.id,
-    title:
-      typeof chat.title === "string" && chat.title.trim()
-        ? chat.title.trim()
-        : "New conversation",
+    title: typeof chat.title === "string" && chat.title.trim()
+      ? chat.title.trim()
+      : "New conversation",
     messages,
     createdAt: Number(chat.createdAt) || Date.now(),
-    updatedAt:
-      Number(chat.updatedAt) ||
-      Number(chat.createdAt) ||
-      Date.now()
+    updatedAt: Number(chat.updatedAt) || Number(chat.createdAt) || Date.now()
   };
 }
 
@@ -706,15 +861,11 @@ function saveActiveChat() {
 // ==========================================
 
 function createId() {
-  return (
-    Date.now().toString(36) +
-    Math.random().toString(36).slice(2, 10)
-  );
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 }
 
 function getActiveChat() {
-  if (!activeChatId) return null;
-  return chats.find(chat => chat.id === activeChatId) || null;
+  return activeChatId ? chats.find(chat => chat.id === activeChatId) || null : null;
 }
 
 function getChatByID(id) {
@@ -814,6 +965,7 @@ function createChat() {
 function startNewChat() {
   promptInput.value = "";
   resizeInput();
+  clearSelectedImage();
   createChat();
 }
 
@@ -837,7 +989,6 @@ function generateTitle(text) {
 
 function renderHistory() {
   historyList.innerHTML = "";
-
   emptyHistory.classList.toggle("hidden", chats.length > 0);
 
   chats.forEach(chat => {
@@ -847,16 +998,11 @@ function renderHistory() {
     const chatButton = document.createElement("button");
     chatButton.className = "history-chat";
 
-    if (chat.id === activeChatId) {
-      chatButton.classList.add("active");
-    }
+    if (chat.id === activeChatId) chatButton.classList.add("active");
 
     chatButton.textContent = chat.title || "Untitled";
     chatButton.title = chat.title || "Untitled";
-
-    chatButton.addEventListener("click", () => {
-      switchChat(chat.id);
-    });
+    chatButton.addEventListener("click", () => switchChat(chat.id));
 
     const menuButton = document.createElement("button");
     menuButton.className = "history-menu-button";
@@ -886,7 +1032,6 @@ function switchChat(id) {
   }
 
   activeChatId = target.id;
-
   saveActiveChat();
 
   renderHistory();
@@ -906,7 +1051,6 @@ function renderChatFor(roomID) {
   if (roomID !== activeChatId) return;
 
   const chat = getChatByID(roomID);
-
   messagesContainer.replaceChildren();
 
   if (!chat || chat.messages.length === 0) {
@@ -923,9 +1067,7 @@ function renderChatFor(roomID) {
     addMessageToDOM(message.role, message.content, false);
   });
 
-  if (isRoomGenerating(roomID)) {
-    showTypingIndicator(roomID);
-  }
+  if (isRoomGenerating(roomID)) showTypingIndicator(roomID);
 
   scrollToBottom(false);
   updateSendButton();
@@ -947,19 +1089,41 @@ function renderChat() {
 // MESSAGE ELEMENT
 // ==========================================
 
-function addMessageToDOM(role, content, shouldScroll = true) {
+function addMessageToDOM(role, content, shouldScroll = true, imageURL = null) {
   const message = document.createElement("article");
 
-  message.className =
-    role === "user"
-      ? "message user"
-      : "message ai";
+  message.className = role === "user" ? "message user" : "message ai";
 
   const contentElement = document.createElement("div");
   contentElement.className = "message-content";
 
   if (role === "user") {
-    contentElement.textContent = content;
+    if (imageURL) {
+      const image = document.createElement("img");
+      image.className = "yati-message-image";
+      image.src = imageURL;
+      image.alt = "User uploaded image";
+      image.loading = "lazy";
+      contentElement.appendChild(image);
+    }
+
+    if (content) {
+      const textElement = document.createElement("div");
+      textElement.textContent = content;
+      contentElement.style.whiteSpace = "pre-wrap";
+      contentElement.style.overflowWrap = "anywhere";
+      contentElement.style.marginTop = imageURL ? "5px" : "0";
+      contentElement.style.marginBottom = "0";
+      contentElement.style.padding = "0";
+      contentElement.style.background = "transparent";
+      contentElement.appendChild(document.createTextNode(""));
+      contentElement.appendChild(textElement);
+    } else if (imageURL) {
+      const label = document.createElement("div");
+      label.className = "yati-image-only-label";
+      label.textContent = "Image";
+      contentElement.appendChild(label);
+    }
   } else {
     contentElement.innerHTML = renderMarkdown(content);
   }
@@ -974,7 +1138,7 @@ function addMessageToDOM(role, content, shouldScroll = true) {
       "Copy response",
       `<svg viewBox="0 0 24 24">
         <rect x="8" y="8" width="12" height="12" rx="2"/>
-        <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 a2 2 0 0 0-2 2v9a2 2 0 0 a0 2 2 0 0 0 2 2h3"/>
+        <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>
       </svg>`
     );
 
@@ -1000,11 +1164,9 @@ function addMessageToDOM(role, content, shouldScroll = true) {
 
 function createActionButton(title, icon) {
   const button = document.createElement("button");
-
   button.className = "message-action";
   button.title = title;
   button.innerHTML = icon;
-
   return button;
 }
 
@@ -1054,9 +1216,7 @@ function showTypingIndicator(roomID) {
   indicator.innerHTML = `
     <div class="message-content">
       <div class="typing-indicator">
-        <span></span>
-        <span></span>
-        <span></span>
+        <span></span><span></span><span></span>
       </div>
     </div>
   `;
@@ -1073,7 +1233,7 @@ function removeTypingIndicator(roomID = null) {
 }
 
 // ==========================================
-// SEND MESSAGE
+// SEND MESSAGE + IMAGE VISION
 // ==========================================
 
 async function sendMessage(customText = null) {
@@ -1089,13 +1249,12 @@ async function sendMessage(customText = null) {
       : promptInput.value
   ).trim();
 
-  if (!text) return;
+  // Pesan boleh kosong jika ada gambar.
+  if (!text && !selectedImage) return;
 
   let chat = getActiveChat();
 
-  if (!chat) {
-    chat = createChat();
-  }
+  if (!chat) chat = createChat();
 
   const roomID = chat.id;
 
@@ -1104,9 +1263,32 @@ async function sendMessage(customText = null) {
     return;
   }
 
+  const imageFile = selectedImage;
+  const imagePreviewURL = selectedImagePreviewURL;
+
+  // Convert gambar ke Base64 sebelum request.
+  let imagePayload = null;
+
+  if (imageFile) {
+    try {
+      const base64Data = await fileToBase64(imageFile);
+
+      imagePayload = {
+        mimeType: imageFile.type,
+        data: base64Data
+      };
+    } catch (error) {
+      console.error("[Yati Vision] Image conversion failed:", error);
+      showToast("Gambar gagal diproses.");
+      return;
+    }
+  }
+
+  const userDisplayText = text || "Tolong analisis gambar ini.";
+
   const userMessage = {
     role: "user",
-    content: text,
+    content: userDisplayText,
     timestamp: Date.now()
   };
 
@@ -1116,7 +1298,7 @@ async function sendMessage(customText = null) {
     chat.title === "New conversation" &&
     chat.messages.filter(message => message.role === "user").length === 1
   ) {
-    chat.title = generateTitle(text);
+    chat.title = generateTitle(userDisplayText);
   }
 
   chat.updatedAt = Date.now();
@@ -1127,11 +1309,23 @@ async function sendMessage(customText = null) {
   if (activeChatId === roomID) {
     welcome.classList.add("hidden");
     chatArea.classList.remove("hidden");
-    addMessageToDOM("user", text);
+
+    addMessageToDOM(
+      "user",
+      text,
+      true,
+      imagePreviewURL
+    );
   }
 
   promptInput.value = "";
   resizeInput();
+
+  // Bersihkan attachment setelah dikunci untuk request ini.
+  selectedImage = null;
+  selectedImagePreviewURL = null;
+  removeImagePreview();
+  if (imageUploadInput) imageUploadInput.value = "";
 
   const token = createId();
 
@@ -1140,9 +1334,7 @@ async function sendMessage(customText = null) {
 
   updateSendButton();
 
-  if (activeChatId === roomID) {
-    showTypingIndicator(roomID);
-  }
+  if (activeChatId === roomID) showTypingIndicator(roomID);
 
   const historySnapshot = chat.messages
     .slice(0, -1)
@@ -1153,13 +1345,28 @@ async function sendMessage(customText = null) {
     }));
 
   try {
+    const requestBody = {
+      message: text || "Tolong analisis gambar yang saya kirim.",
+      history: historySnapshot
+    };
+
+    // INI BAGIAN PENTING:
+    // gambar sekarang ikut masuk payload API.
+    if (imagePayload) {
+      requestBody.image = imagePayload;
+    }
+
+    console.log("[Yati Vision] Sending request:", {
+      hasImage: Boolean(imagePayload),
+      imageType: imagePayload?.mimeType || null,
+      imageSize: imageFile?.size || 0,
+      textLength: text.length
+    });
+
     const response = await fetch(API_URL, {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({
-        message: text,
-        history: historySnapshot
-      })
+      body: JSON.stringify(requestBody)
     });
 
     if (response.status === 401) {
@@ -1185,15 +1392,10 @@ async function sendMessage(customText = null) {
       throw new Error("Empty AI response");
     }
 
-    if (requestTokens.get(roomID) !== token) {
-      return;
-    }
+    if (requestTokens.get(roomID) !== token) return;
 
     const originalRoom = getChatByID(roomID);
-
-    if (!originalRoom) {
-      return;
-    }
+    if (!originalRoom) return;
 
     const assistantMessage = {
       role: "assistant",
@@ -1216,14 +1418,12 @@ async function sendMessage(customText = null) {
   } catch (error) {
     console.error("Yati API error:", error);
 
-    if (requestTokens.get(roomID) !== token) {
-      return;
-    }
+    if (requestTokens.get(roomID) !== token) return;
 
     const originalRoom = getChatByID(roomID);
 
     if (originalRoom && activeChatId === roomID) {
-      removeTypingIndicator(roomID);
+      removeTypingIndicator();
 
       addMessageToDOM(
         "assistant",
@@ -1241,9 +1441,7 @@ async function sendMessage(customText = null) {
 
     updateSendButton();
 
-    if (activeChatId === roomID) {
-      promptInput.focus();
-    }
+    if (activeChatId === roomID) promptInput.focus();
   }
 }
 
@@ -1257,7 +1455,8 @@ function updateSendButton() {
     : false;
 
   sendButton.disabled =
-    activeGenerating || promptInput.value.trim().length === 0;
+    activeGenerating ||
+    (!promptInput.value.trim() && !selectedImage);
 
   sendButton.innerHTML = activeGenerating
     ? `
@@ -1394,9 +1593,7 @@ function renderSearchResults(query) {
 
   if (!filtered.length) {
     searchResults.innerHTML = `
-      <div class="search-empty">
-        No conversations found.
-      </div>
+      <div class="search-empty">No conversations found.</div>
     `;
     return;
   }
@@ -1436,15 +1633,11 @@ function openContextMenu(chatID, button) {
 
   const rect = button.getBoundingClientRect();
 
-  contextMenu.style.left = Math.min(
-    rect.left,
-    window.innerWidth - 170
-  ) + "px";
+  contextMenu.style.left =
+    Math.min(rect.left, window.innerWidth - 170) + "px";
 
-  contextMenu.style.top = Math.min(
-    rect.bottom + 4,
-    window.innerHeight - 100
-  ) + "px";
+  contextMenu.style.top =
+    Math.min(rect.bottom + 4, window.innerHeight - 100) + "px";
 
   contextMenu.classList.remove("hidden");
 }
@@ -1463,10 +1656,8 @@ renameButton.addEventListener("click", () => {
 
   if (newTitle && newTitle.trim()) {
     chat.title = newTitle.trim().slice(0, 100);
-
     saveChats();
     renderHistory();
-
     showToast("Conversation renamed.");
   }
 
@@ -1500,9 +1691,7 @@ deleteButton.addEventListener("click", () => {
 
   chats = chats.filter(c => c.id !== chatID);
 
-  if (activeChatId === chatID) {
-    activeChatId = chats[0]?.id || null;
-  }
+  if (activeChatId === chatID) activeChatId = chats[0]?.id || null;
 
   saveChats();
   saveActiveChat();
@@ -1521,15 +1710,10 @@ deleteButton.addEventListener("click", () => {
 // ==========================================
 
 window.addEventListener("storage", event => {
-  if (
-    event.key === STORAGE_KEY ||
-    event.key === DELETED_CHATS_KEY
-  ) {
+  if (event.key === STORAGE_KEY || event.key === DELETED_CHATS_KEY) {
     chats = loadChats();
 
-    if (!chatExists(activeChatId)) {
-      activeChatId = null;
-    }
+    if (!chatExists(activeChatId)) activeChatId = null;
 
     renderHistory();
     renderChat();
@@ -1565,10 +1749,7 @@ document.addEventListener("keydown", event => {
     $("#yatiLogoutMenu")?.classList.add("hidden");
   }
 
-  if (
-    (event.ctrlKey || event.metaKey) &&
-    event.key.toLowerCase() === "k"
-  ) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();
     openSearch();
   }
@@ -1615,7 +1796,7 @@ function initializeImageUpload() {
     if (!file) return;
 
     if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-      showToast("Format gambar tidak didukung.");
+      showToast("Format gambar tidak didukung. Gunakan PNG, JPG, atau WEBP.");
       imageUploadInput.value = "";
       return;
     }
@@ -1626,18 +1807,27 @@ function initializeImageUpload() {
       return;
     }
 
-    selectedImage = file;
+    // Bersihkan gambar sebelumnya jika ada.
+    if (selectedImagePreviewURL) {
+      URL.revokeObjectURL(selectedImagePreviewURL);
+    }
 
-    console.log("[Yati Upload] Gambar terpilih:", {
+    selectedImage = file;
+    selectedImagePreviewURL = URL.createObjectURL(file);
+
+    console.log("[Yati Upload] Image selected:", {
       name: file.name,
       type: file.type,
       size: file.size,
       sizeMB: (file.size / (1024 * 1024)).toFixed(2) + " MB"
     });
 
-    showToast(`Gambar dipilih: ${file.name}`);
+    createImagePreview();
+    updateSendButton();
 
-    // Reset supaya file yang sama bisa dipilih ulang.
+    showToast("Gambar siap dikirim.");
+
+    // Reset input agar file sama bisa dipilih ulang.
     imageUploadInput.value = "";
   });
 }
