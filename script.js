@@ -1,4 +1,3 @@
-
 /* =========================================================
    YATI AI 2.0 — FRONTEND ENGINE
    GOOGLE AUTH + MULTI-ROOM + D1 MEMORY + IMAGE VISION
@@ -121,6 +120,10 @@ function fileToBase64(file) {
   });
 }
 
+function removeImagePreview() {
+  $("#yatiImagePreview")?.remove();
+}
+
 function clearSelectedImage() {
   selectedImage = null;
 
@@ -160,10 +163,10 @@ function createImagePreview() {
     </div>
   `;
 
-  const style = document.createElement("style");
-
   if (!$("#yatiImagePreviewStyles")) {
+    const style = document.createElement("style");
     style.id = "yatiImagePreviewStyles";
+
     style.textContent = `
       #yatiImagePreview {
         padding: 10px 12px 0;
@@ -264,27 +267,23 @@ function createImagePreview() {
     `;
 
     document.head.appendChild(style);
-
-    parent.insertBefore(preview, promptInput);
-
-    const image = preview.querySelector("#yatiPreviewImage");
-    image.src = selectedImagePreviewURL;
-
-    preview.querySelector(".yati-preview-name").textContent =
-      selectedImage.name;
-
-    preview.querySelector(".yati-preview-size").textContent =
-      `${(selectedImage.size / (1024 * 1024)).toFixed(2)} MB`;
-
-    preview.querySelector("#yatiRemoveImage").addEventListener(
-      "click",
-      clearSelectedImage
-    );
   }
 
-  function removeImagePreview() {
-    $("#yatiImagePreview")?.remove();
-  }
+  parent.insertBefore(preview, promptInput);
+
+  const image = preview.querySelector("#yatiPreviewImage");
+  image.src = selectedImagePreviewURL;
+
+  preview.querySelector(".yati-preview-name").textContent =
+    selectedImage.name;
+
+  preview.querySelector(".yati-preview-size").textContent =
+    `${(selectedImage.size / (1024 * 1024)).toFixed(2)} MB`;
+
+  preview.querySelector("#yatiRemoveImage").addEventListener(
+    "click",
+    clearSelectedImage
+  );
 }
 
 // ==========================================
@@ -330,7 +329,7 @@ function authHeaders() {
 
   return {
     "Content-Type": "application/json",
-    ...(token ? { "Authorization": `Bearer ${token}` } : {})
+    ...(token ? { Authorization: `Bearer ${token}` } : {})
   };
 }
 
@@ -627,13 +626,19 @@ async function initializeGoogleLogin() {
       cancel_on_tap_outside: true
     });
 
-    google.accounts.id.renderButton($("#yatiGoogleButton"), {
-      theme: "filled_black",
-      size: "large",
-      shape: "pill",
-      text: "signin_with",
-      width: 280
-    });
+    const googleButtonContainer = $("#yatiGoogleButton");
+
+    if (googleButtonContainer) {
+      googleButtonContainer.replaceChildren();
+
+      google.accounts.id.renderButton(googleButtonContainer, {
+        theme: "filled_black",
+        size: "large",
+        shape: "pill",
+        text: "signin_with",
+        width: 280
+      });
+    }
 
     setLoginStatus("Silakan login dengan akun Google.");
   } catch (error) {
@@ -652,7 +657,7 @@ async function handleGoogleCredential(response) {
       body: JSON.stringify({ credential: response.credential })
     });
 
-    const data = await result.json();
+    const data = await result.json().catch(() => ({}));
 
     if (!result.ok || !data.success || !data.token) {
       throw new Error(data.error || "Login gagal.");
@@ -774,7 +779,12 @@ function readJSON(key, fallback) {
 
 function getDeletedChatIDs() {
   const data = readJSON(DELETED_CHATS_KEY, []);
-  return new Set(Array.isArray(data) ? data.filter(id => typeof id === "string") : []);
+
+  return new Set(
+    Array.isArray(data)
+      ? data.filter(id => typeof id === "string")
+      : []
+  );
 }
 
 function saveDeletedChatIDs(ids) {
@@ -865,7 +875,9 @@ function createId() {
 }
 
 function getActiveChat() {
-  return activeChatId ? chats.find(chat => chat.id === activeChatId) || null : null;
+  return activeChatId
+    ? chats.find(chat => chat.id === activeChatId) || null
+    : null;
 }
 
 function getChatByID(id) {
@@ -988,7 +1000,9 @@ function generateTitle(text) {
 // ==========================================
 
 function renderHistory() {
-  historyList.innerHTML = "";
+  if (!historyList || !emptyHistory) return;
+
+  historyList.replaceChildren();
   emptyHistory.classList.toggle("hidden", chats.length > 0);
 
   chats.forEach(chat => {
@@ -998,10 +1012,13 @@ function renderHistory() {
     const chatButton = document.createElement("button");
     chatButton.className = "history-chat";
 
-    if (chat.id === activeChatId) chatButton.classList.add("active");
+    if (chat.id === activeChatId) {
+      chatButton.classList.add("active");
+    }
 
     chatButton.textContent = chat.title || "Untitled";
     chatButton.title = chat.title || "Untitled";
+
     chatButton.addEventListener("click", () => switchChat(chat.id));
 
     const menuButton = document.createElement("button");
@@ -1067,7 +1084,9 @@ function renderChatFor(roomID) {
     addMessageToDOM(message.role, message.content, false);
   });
 
-  if (isRoomGenerating(roomID)) showTypingIndicator(roomID);
+  if (isRoomGenerating(roomID)) {
+    showTypingIndicator(roomID);
+  }
 
   scrollToBottom(false);
   updateSendButton();
@@ -1104,24 +1123,26 @@ function addMessageToDOM(role, content, shouldScroll = true, imageURL = null) {
       image.src = imageURL;
       image.alt = "User uploaded image";
       image.loading = "lazy";
+
       contentElement.appendChild(image);
     }
 
     if (content) {
       const textElement = document.createElement("div");
       textElement.textContent = content;
-      contentElement.style.whiteSpace = "pre-wrap";
-      contentElement.style.overflowWrap = "anywhere";
-      contentElement.style.marginTop = imageURL ? "5px" : "0";
-      contentElement.style.marginBottom = "0";
-      contentElement.style.padding = "0";
-      contentElement.style.background = "transparent";
-      contentElement.appendChild(document.createTextNode(""));
+      textElement.style.whiteSpace = "pre-wrap";
+      textElement.style.overflowWrap = "anywhere";
+      textElement.style.marginTop = imageURL ? "5px" : "0";
+      textElement.style.marginBottom = "0";
+      textElement.style.padding = "0";
+      textElement.style.background = "transparent";
+
       contentElement.appendChild(textElement);
     } else if (imageURL) {
       const label = document.createElement("div");
       label.className = "yati-image-only-label";
       label.textContent = "Image";
+
       contentElement.appendChild(label);
     }
   } else {
@@ -1167,6 +1188,7 @@ function createActionButton(title, icon) {
   button.className = "message-action";
   button.title = title;
   button.innerHTML = icon;
+
   return button;
 }
 
@@ -1192,6 +1214,8 @@ function renderMarkdown(text) {
 // ==========================================
 
 function scrollToBottom(smooth = true) {
+  if (!chatScroll) return;
+
   requestAnimationFrame(() => {
     chatScroll.scrollTo({
       top: chatScroll.scrollHeight,
@@ -1229,6 +1253,7 @@ function showTypingIndicator(roomID) {
 
 function removeTypingIndicator(roomID = null) {
   if (roomID && roomID !== activeChatId) return;
+
   $("#typingIndicator")?.remove();
 }
 
@@ -1249,12 +1274,13 @@ async function sendMessage(customText = null) {
       : promptInput.value
   ).trim();
 
-  // Pesan boleh kosong jika ada gambar.
   if (!text && !selectedImage) return;
 
   let chat = getActiveChat();
 
-  if (!chat) chat = createChat();
+  if (!chat) {
+    chat = createChat();
+  }
 
   const roomID = chat.id;
 
@@ -1266,7 +1292,6 @@ async function sendMessage(customText = null) {
   const imageFile = selectedImage;
   const imagePreviewURL = selectedImagePreviewURL;
 
-  // Convert gambar ke Base64 sebelum request.
   let imagePayload = null;
 
   if (imageFile) {
@@ -1321,11 +1346,14 @@ async function sendMessage(customText = null) {
   promptInput.value = "";
   resizeInput();
 
-  // Bersihkan attachment setelah dikunci untuk request ini.
   selectedImage = null;
   selectedImagePreviewURL = null;
+
   removeImagePreview();
-  if (imageUploadInput) imageUploadInput.value = "";
+
+  if (imageUploadInput) {
+    imageUploadInput.value = "";
+  }
 
   const token = createId();
 
@@ -1334,7 +1362,9 @@ async function sendMessage(customText = null) {
 
   updateSendButton();
 
-  if (activeChatId === roomID) showTypingIndicator(roomID);
+  if (activeChatId === roomID) {
+    showTypingIndicator(roomID);
+  }
 
   const historySnapshot = chat.messages
     .slice(0, -1)
@@ -1350,8 +1380,6 @@ async function sendMessage(customText = null) {
       history: historySnapshot
     };
 
-    // INI BAGIAN PENTING:
-    // gambar sekarang ikut masuk payload API.
     if (imagePayload) {
       requestBody.image = imagePayload;
     }
@@ -1441,7 +1469,9 @@ async function sendMessage(customText = null) {
 
     updateSendButton();
 
-    if (activeChatId === roomID) promptInput.focus();
+    if (activeChatId === roomID) {
+      promptInput.focus();
+    }
   }
 }
 
@@ -1450,6 +1480,8 @@ async function sendMessage(customText = null) {
 // ==========================================
 
 function updateSendButton() {
+  if (!sendButton || !promptInput) return;
+
   const activeGenerating = activeChatId
     ? isRoomGenerating(activeChatId)
     : false;
@@ -1476,6 +1508,8 @@ function updateSendButton() {
 // ==========================================
 
 function resizeInput() {
+  if (!promptInput) return;
+
   promptInput.style.height = "auto";
 
   promptInput.style.height =
@@ -1567,7 +1601,9 @@ searchButton.addEventListener("click", openSearch);
 closeSearchButton.addEventListener("click", closeSearch);
 
 searchModal.addEventListener("click", event => {
-  if (event.target === searchModal) closeSearch();
+  if (event.target === searchModal) {
+    closeSearch();
+  }
 });
 
 searchInput.addEventListener("input", () => {
@@ -1684,6 +1720,7 @@ deleteButton.addEventListener("click", () => {
 
   const deletedIDs = getDeletedChatIDs();
   deletedIDs.add(chatID);
+
   saveDeletedChatIDs(deletedIDs);
 
   requestTokens.delete(chatID);
@@ -1691,7 +1728,9 @@ deleteButton.addEventListener("click", () => {
 
   chats = chats.filter(c => c.id !== chatID);
 
-  if (activeChatId === chatID) activeChatId = chats[0]?.id || null;
+  if (activeChatId === chatID) {
+    activeChatId = chats[0]?.id || null;
+  }
 
   saveChats();
   saveActiveChat();
@@ -1710,10 +1749,15 @@ deleteButton.addEventListener("click", () => {
 // ==========================================
 
 window.addEventListener("storage", event => {
-  if (event.key === STORAGE_KEY || event.key === DELETED_CHATS_KEY) {
+  if (
+    event.key === STORAGE_KEY ||
+    event.key === DELETED_CHATS_KEY
+  ) {
     chats = loadChats();
 
-    if (!chatExists(activeChatId)) activeChatId = null;
+    if (!chatExists(activeChatId)) {
+      activeChatId = null;
+    }
 
     renderHistory();
     renderChat();
@@ -1749,7 +1793,10 @@ document.addEventListener("keydown", event => {
     $("#yatiLogoutMenu")?.classList.add("hidden");
   }
 
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+  if (
+    (event.ctrlKey || event.metaKey) &&
+    event.key.toLowerCase() === "k"
+  ) {
     event.preventDefault();
     openSearch();
   }
@@ -1802,12 +1849,11 @@ function initializeImageUpload() {
     }
 
     if (file.size > MAX_IMAGE_SIZE) {
-      showToast("Ukuran gambar maksimal 10 MB.");
+      showToast("Ukuran gambar maksimal 8 MB.");
       imageUploadInput.value = "";
       return;
     }
 
-    // Bersihkan gambar sebelumnya jika ada.
     if (selectedImagePreviewURL) {
       URL.revokeObjectURL(selectedImagePreviewURL);
     }
@@ -1827,7 +1873,6 @@ function initializeImageUpload() {
 
     showToast("Gambar siap dikirim.");
 
-    // Reset input agar file sama bisa dipilih ulang.
     imageUploadInput.value = "";
   });
 }
